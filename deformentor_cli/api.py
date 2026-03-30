@@ -116,6 +116,56 @@ def get_calendar_event(session, event_id):
     return resp.json()
 
 
+def get_news_detail(session, news_id):
+    """Fetch a single news item by ID.
+
+    Calls GetNewsList (which returns all items with full content) and filters
+    by id client-side. Returns the matching item dict, or None if not found.
+    """
+    resp = session.post(
+        f"{BASE_URL}/Communication/News/GetNewsList",
+        json={"pageSize": -1, "sortBy": "lastPublishDate___SORT_DESC"},
+        headers=AJAX_HEADERS,
+        timeout=HTTP_TIMEOUT,
+    )
+    resp.raise_for_status()
+    items = resp.json().get("items", [])
+    return next((item for item in items if item["id"] == int(news_id)), None)
+
+
+def get_attachment(session, url_path):
+    """Fetch an attachment by its URL path and return raw bytes.
+
+    url_path is the value from a news item's attachments[].url field,
+    e.g. '/Resources/Resource/Download/2000001?api=IM2&ModuleType=NewsItem&ConnectionId=1000001'
+    """
+    resp = session.get(
+        f"{BASE_URL}{url_path}",
+        headers=AJAX_HEADERS,
+        timeout=HTTP_TIMEOUT,
+    )
+    resp.raise_for_status()
+    return resp.content
+
+
+def get_meeting_availabilities(session):
+    """Fetch meeting slot availabilities for the current child context.
+
+    Returns a dict with totalCount, totalPages, and availabilities list.
+    Each availability has: availabilityId, date, timeFrom, stringDate,
+    timeRange, registeredBy, meetingType, location, meetingId (int if
+    booked, None if not), meetingLink, bookingsCloseBefore.
+    """
+    resp = session.post(
+        f"{BASE_URL}/Home/meeting/GetPupilAvailabilities",
+        json={},
+        headers=AJAX_HEADERS,
+        timeout=HTTP_TIMEOUT,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
 def _extract_id_from_url(url):
     """Extract ID from notification URL hash route. Returns str or None.
 

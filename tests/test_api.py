@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from deformentor_cli.api import get_children, switch_child, get_notifications, get_messages, get_attendance_detail, get_calendar_event, fetch_all_notifications, fetch_all_messages
+from deformentor_cli.api import get_children, switch_child, get_notifications, get_messages, get_attendance_detail, get_calendar_event, get_news_detail, get_meeting_availabilities, fetch_all_notifications, fetch_all_messages, get_attachment
 from deformentor_cli.api import _normalize_type_name, _extract_id_from_url, _normalize_notification, _normalize_message, _normalize_message_summary
 
 
@@ -248,7 +248,7 @@ class TestNormalizeTypeName:
 
 class TestExtractIdFromUrl:
     def test_news_url(self):
-        assert _extract_id_from_url("/#/communication/news/1942932") == "1942932"
+        assert _extract_id_from_url("/#/communication/news/1000001") == "1000001"
 
     def test_attendance_url(self):
         assert _extract_id_from_url("/#/attendance/tab/leaveRequests/show/197608") == "197608"
@@ -385,7 +385,7 @@ class TestFetchAllNotifications:
                 "type": "NewsItem",
                 "title": "Skolnyhet",
                 "orderDate": "2026-03-29T10:00:00",
-                "url": "/#/communication/news/1942932",
+                "url": "/#/communication/news/1000001",
             },
         ]
 
@@ -664,6 +664,94 @@ class TestFetchAllMessages:
         assert any("5002002" in u for u in switch_urls)
 
 
+class TestGetMeetingAvailabilities:
+    def test_posts_to_correct_url(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.json.return_value = {"totalCount": 0, "totalPages": 0, "availabilities": []}
+        session.post.return_value = resp
+        get_meeting_availabilities(session)
+        url = session.post.call_args[0][0]
+        assert "/Home/meeting/GetPupilAvailabilities" in url
+
+    def test_sends_empty_body(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.json.return_value = {"totalCount": 0, "totalPages": 0, "availabilities": []}
+        session.post.return_value = resp
+        get_meeting_availabilities(session)
+        kwargs = session.post.call_args[1]
+        assert kwargs["json"] == {}
+
+    def test_returns_json_response(self):
+        session = MagicMock()
+        resp = MagicMock()
+        payload = {
+            "totalCount": 1,
+            "totalPages": 1,
+            "availabilities": [{"availabilityId": 3000001, "meetingId": 4000001, "meetingType": "Utvecklingssamtal"}],
+        }
+        resp.json.return_value = payload
+        session.post.return_value = resp
+        result = get_meeting_availabilities(session)
+        assert result == payload
+
+    def test_sends_ajax_header(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.json.return_value = {"totalCount": 0, "totalPages": 0, "availabilities": []}
+        session.post.return_value = resp
+        get_meeting_availabilities(session)
+        headers = session.post.call_args[1].get("headers", {})
+        assert headers.get("X-Requested-With") == "XMLHttpRequest"
+
+    def test_raises_on_http_error(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.raise_for_status.side_effect = Exception("500 Error")
+        session.post.return_value = resp
+        with pytest.raises(Exception, match="500"):
+            get_meeting_availabilities(session)
+
+
+class TestGetAttachment:
+    def test_gets_correct_url(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.content = b"%PDF-1.4 test"
+        session.get.return_value = resp
+        url_path = "/Resources/Resource/Download/2000001?api=IM2&ModuleType=NewsItem&ConnectionId=1000001"
+        get_attachment(session, url_path)
+        called_url = session.get.call_args[0][0]
+        assert called_url == f"https://hub.infomentor.se{url_path}"
+
+    def test_returns_bytes(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.content = b"%PDF-1.4 fake"
+        session.get.return_value = resp
+        result = get_attachment(session, "/Resources/Resource/Download/123?api=IM2")
+        assert isinstance(result, bytes)
+        assert result == b"%PDF-1.4 fake"
+
+    def test_sends_ajax_header(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.content = b""
+        session.get.return_value = resp
+        get_attachment(session, "/Resources/Resource/Download/123?api=IM2")
+        headers = session.get.call_args[1].get("headers", {})
+        assert headers.get("X-Requested-With") == "XMLHttpRequest"
+
+    def test_raises_on_http_error(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.raise_for_status.side_effect = Exception("404 Not Found")
+        session.get.return_value = resp
+        with pytest.raises(Exception, match="404"):
+            get_attachment(session, "/Resources/Resource/Download/bad")
+
+
 class TestGetAttendanceDetail:
     def test_posts_to_correct_url(self):
         session = MagicMock()
@@ -752,3 +840,62 @@ class TestGetCalendarEvent:
         session.post.return_value = resp
         with pytest.raises(Exception, match="404"):
             get_calendar_event(session, "99999")
+
+
+class TestGetNewsDetail:
+    def test_posts_to_get_news_list_url(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.json.return_value = {"items": [{"id": 1000001, "title": "Test", "content": "<p>Body</p>", "attachments": []}]}
+        session.post.return_value = resp
+        get_news_detail(session, 1000001)
+        url = session.post.call_args[0][0]
+        assert "/Communication/News/GetNewsList" in url
+
+    def test_sends_page_size_minus_one(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.json.return_value = {"items": [{"id": 1000001, "title": "Test", "content": "", "attachments": []}]}
+        session.post.return_value = resp
+        get_news_detail(session, 1000001)
+        kwargs = session.post.call_args[1]
+        assert kwargs["json"]["pageSize"] == -1
+
+    def test_returns_matching_item(self):
+        session = MagicMock()
+        resp = MagicMock()
+        items = [
+            {"id": 111, "title": "Other", "content": "x", "attachments": []},
+            {"id": 1000001, "title": "Veckobrev", "content": "<p>Text</p>", "attachments": [{"url": "/Resources/Resource/Download/123", "title": "doc.pdf", "fileType": None}]},
+        ]
+        resp.json.return_value = {"items": items}
+        session.post.return_value = resp
+        result = get_news_detail(session, 1000001)
+        assert result["id"] == 1000001
+        assert result["title"] == "Veckobrev"
+        assert len(result["attachments"]) == 1
+
+    def test_returns_none_when_not_found(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.json.return_value = {"items": [{"id": 111, "title": "Other", "content": "", "attachments": []}]}
+        session.post.return_value = resp
+        result = get_news_detail(session, 9999)
+        assert result is None
+
+    def test_sends_ajax_header(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.json.return_value = {"items": []}
+        session.post.return_value = resp
+        get_news_detail(session, 1)
+        headers = session.post.call_args[1].get("headers", {})
+        assert headers.get("X-Requested-With") == "XMLHttpRequest"
+
+    def test_raises_on_http_error(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.raise_for_status.side_effect = Exception("500 Error")
+        session.post.return_value = resp
+        with pytest.raises(Exception, match="500"):
+            get_news_detail(session, 1)

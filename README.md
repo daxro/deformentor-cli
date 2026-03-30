@@ -68,6 +68,11 @@ deformentor notifications --since 2026-01-01
 deformentor messages                       # messages only (last 30 days)
 deformentor calendar <id>                  # calendar event detail
 deformentor attendance <id>                # leave request detail
+deformentor news <id>                      # news item detail
+deformentor news <id> --child Anna         # news item for specific child
+deformentor meeting                        # meeting slot availabilities
+deformentor meeting --child Anna           # meeting slots for specific child
+deformentor attachment <url> > doc.docx    # download attachment to file
 deformentor status                         # human-readable status
 deformentor status --json                  # machine-readable status
 ```
@@ -135,3 +140,47 @@ Messages:
 ```
 
 Notification types: `attendance`, `calendar`, `news`, `meeting`, `message`.
+
+News item (`deformentor news <id>`):
+
+```json
+{
+  "id": 197608,
+  "title": "Viktig information",
+  "content": "<p>HTML content...</p>",
+  "publishedDate": "2026-03-01T08:00:00",
+  "attachments": [
+    {
+      "url": "/Resources/Resource/Download/abc123",
+      "title": "Bilaga.docx",
+      "fileType": "docx"
+    }
+  ]
+}
+```
+
+Meeting availabilities (`deformentor meeting`):
+
+```json
+{
+  "totalCount": 12,
+  "totalPages": 1,
+  "availabilities": [
+    {
+      "availabilityId": "55001",
+      "date": "2026-04-10",
+      "timeFrom": "08:00",
+      "timeRange": "08:00-08:20",
+      "meetingType": "InPerson",
+      "location": "Room 3",
+      "meetingId": null
+    }
+  ]
+}
+```
+
+`deformentor attachment <url>` writes raw bytes to stdout. Redirect to a file:
+
+```bash
+deformentor attachment "/Resources/Resource/Download/abc123" > doc.docx
+```

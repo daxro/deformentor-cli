@@ -620,6 +620,129 @@ class TestCalendarCommand:
         mock_switch.assert_called_once_with(mock_login.return_value, "Astrid")
 
 
+class TestNewsCommand:
+    @patch("deformentor_cli.cli.get_news_detail")
+    @patch("deformentor_cli.cli.login")
+    @patch("deformentor_cli.cli.dotenv_values")
+    def test_outputs_json_to_stdout(self, mock_dotenv, mock_login, mock_fetch, capsys):
+        from deformentor_cli.cli import _news
+        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_login.return_value = MagicMock()
+        mock_fetch.return_value = {"id": 1000001, "title": "Veckobrev", "content": "<p>Text</p>", "attachments": []}
+        args = MagicMock()
+        args.id = "1000001"
+        args.child = None
+        _news(args)
+        captured = capsys.readouterr()
+        output = json.loads(captured.out)
+        assert output["title"] == "Veckobrev"
+
+    @patch("deformentor_cli.cli.get_news_detail")
+    @patch("deformentor_cli.cli.login")
+    @patch("deformentor_cli.cli.dotenv_values")
+    def test_exits_when_not_found(self, mock_dotenv, mock_login, mock_fetch, capsys):
+        from deformentor_cli.cli import _news
+        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_login.return_value = MagicMock()
+        mock_fetch.return_value = None
+        args = MagicMock()
+        args.id = "9999"
+        args.child = None
+        with pytest.raises(SystemExit) as exc_info:
+            _news(args)
+        assert exc_info.value.code == 4
+
+    @patch("deformentor_cli.cli._resolve_and_switch_child")
+    @patch("deformentor_cli.cli.get_news_detail")
+    @patch("deformentor_cli.cli.login")
+    @patch("deformentor_cli.cli.dotenv_values")
+    def test_switches_child_when_provided(self, mock_dotenv, mock_login, mock_fetch, mock_switch, capsys):
+        from deformentor_cli.cli import _news
+        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_login.return_value = MagicMock()
+        mock_fetch.return_value = {"id": 1000001, "title": "Test", "content": "", "attachments": []}
+        args = MagicMock()
+        args.id = "1000001"
+        args.child = "Astrid"
+        _news(args)
+        mock_switch.assert_called_once_with(mock_login.return_value, "Astrid")
+
+
+class TestMeetingCommand:
+    @patch("deformentor_cli.cli.get_meeting_availabilities")
+    @patch("deformentor_cli.cli.login")
+    @patch("deformentor_cli.cli.dotenv_values")
+    def test_outputs_json_to_stdout(self, mock_dotenv, mock_login, mock_fetch, capsys):
+        from deformentor_cli.cli import _meeting
+        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_login.return_value = MagicMock()
+        mock_fetch.return_value = {"totalCount": 1, "totalPages": 1, "availabilities": [{"availabilityId": 3000001, "meetingType": "Utvecklingssamtal"}]}
+        args = MagicMock()
+        args.child = None
+        _meeting(args)
+        captured = capsys.readouterr()
+        output = json.loads(captured.out)
+        assert output["totalCount"] == 1
+        assert output["availabilities"][0]["availabilityId"] == 3000001
+
+    @patch("deformentor_cli.cli._resolve_and_switch_child")
+    @patch("deformentor_cli.cli.get_meeting_availabilities")
+    @patch("deformentor_cli.cli.login")
+    @patch("deformentor_cli.cli.dotenv_values")
+    def test_switches_child_when_provided(self, mock_dotenv, mock_login, mock_fetch, mock_switch, capsys):
+        from deformentor_cli.cli import _meeting
+        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_login.return_value = MagicMock()
+        mock_fetch.return_value = {"totalCount": 0, "totalPages": 0, "availabilities": []}
+        args = MagicMock()
+        args.child = "Felix"
+        _meeting(args)
+        mock_switch.assert_called_once_with(mock_login.return_value, "Felix")
+
+
+class TestAttachmentCommand:
+    @patch("deformentor_cli.cli.get_attachment")
+    @patch("deformentor_cli.cli.login")
+    @patch("deformentor_cli.cli.dotenv_values")
+    def test_writes_bytes_to_stdout(self, mock_dotenv, mock_login, mock_fetch):
+        from io import BytesIO
+        from unittest.mock import patch as mpatch
+        from deformentor_cli.cli import _attachment
+        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_login.return_value = MagicMock()
+        mock_fetch.return_value = b"%PDF-1.4 test"
+        args = MagicMock()
+        args.url = "/Resources/Resource/Download/123?api=IM2"
+        args.child = None
+        buf = BytesIO()
+        fake_stdout = MagicMock()
+        fake_stdout.buffer = buf
+        with mpatch("sys.stdout", fake_stdout):
+            _attachment(args)
+        assert buf.getvalue() == b"%PDF-1.4 test"
+
+    @patch("deformentor_cli.cli._resolve_and_switch_child")
+    @patch("deformentor_cli.cli.get_attachment")
+    @patch("deformentor_cli.cli.login")
+    @patch("deformentor_cli.cli.dotenv_values")
+    def test_switches_child_when_provided(self, mock_dotenv, mock_login, mock_fetch, mock_switch):
+        from io import BytesIO
+        from unittest.mock import patch as mpatch
+        from deformentor_cli.cli import _attachment
+        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_login.return_value = MagicMock()
+        mock_fetch.return_value = b""
+        args = MagicMock()
+        args.url = "/Resources/Resource/Download/123?api=IM2"
+        args.child = "Astrid"
+        buf = BytesIO()
+        fake_stdout = MagicMock()
+        fake_stdout.buffer = buf
+        with mpatch("sys.stdout", fake_stdout):
+            _attachment(args)
+        mock_switch.assert_called_once_with(mock_login.return_value, "Astrid")
+
+
 class TestQuietMode:
     @patch("deformentor_cli.cli.date")
     @patch("deformentor_cli.cli.fetch_all_notifications")
