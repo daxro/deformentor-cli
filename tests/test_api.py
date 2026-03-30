@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from deformentor_cli.api import get_children, switch_child, get_notifications, get_messages, get_attendance_detail, get_calendar_event, get_news_detail, get_meeting_availabilities, fetch_all_notifications, fetch_all_messages
+from deformentor_cli.api import get_children, switch_child, get_notifications, get_messages, get_attendance_detail, get_calendar_event, get_news_detail, get_meeting_availabilities, fetch_all_notifications, fetch_all_messages, get_attachment
 from deformentor_cli.api import _normalize_type_name, _extract_id_from_url, _normalize_notification, _normalize_message, _normalize_message_summary
 
 
@@ -712,6 +712,44 @@ class TestGetMeetingAvailabilities:
         session.post.return_value = resp
         with pytest.raises(Exception, match="500"):
             get_meeting_availabilities(session)
+
+
+class TestGetAttachment:
+    def test_gets_correct_url(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.content = b"%PDF-1.4 test"
+        session.get.return_value = resp
+        url_path = "/Resources/Resource/Download/18065702?api=IM2&ModuleType=NewsItem&ConnectionId=1942932"
+        get_attachment(session, url_path)
+        called_url = session.get.call_args[0][0]
+        assert called_url == f"https://hub.infomentor.se{url_path}"
+
+    def test_returns_bytes(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.content = b"%PDF-1.4 fake"
+        session.get.return_value = resp
+        result = get_attachment(session, "/Resources/Resource/Download/123?api=IM2")
+        assert isinstance(result, bytes)
+        assert result == b"%PDF-1.4 fake"
+
+    def test_sends_ajax_header(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.content = b""
+        session.get.return_value = resp
+        get_attachment(session, "/Resources/Resource/Download/123?api=IM2")
+        headers = session.get.call_args[1].get("headers", {})
+        assert headers.get("X-Requested-With") == "XMLHttpRequest"
+
+    def test_raises_on_http_error(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.raise_for_status.side_effect = Exception("404 Not Found")
+        session.get.return_value = resp
+        with pytest.raises(Exception, match="404"):
+            get_attachment(session, "/Resources/Resource/Download/bad")
 
 
 class TestGetAttendanceDetail:

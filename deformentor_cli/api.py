@@ -133,6 +133,21 @@ def get_news_detail(session, news_id):
     return next((item for item in items if item["id"] == int(news_id)), None)
 
 
+def get_attachment(session, url_path):
+    """Fetch an attachment by its URL path and return raw bytes.
+
+    url_path is the value from a news item's attachments[].url field,
+    e.g. '/Resources/Resource/Download/18065702?api=IM2&ModuleType=NewsItem&ConnectionId=1942932'
+    """
+    resp = session.get(
+        f"{BASE_URL}{url_path}",
+        headers=AJAX_HEADERS,
+        timeout=HTTP_TIMEOUT,
+    )
+    resp.raise_for_status()
+    return resp.content
+
+
 def get_meeting_availabilities(session):
     """Fetch meeting slot availabilities for the current child context.
 
