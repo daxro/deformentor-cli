@@ -628,9 +628,9 @@ class TestNewsCommand:
         from deformentor_cli.cli import _news
         mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
         mock_login.return_value = MagicMock()
-        mock_fetch.return_value = {"id": 1942932, "title": "Veckobrev", "content": "<p>Text</p>", "attachments": []}
+        mock_fetch.return_value = {"id": 1000001, "title": "Veckobrev", "content": "<p>Text</p>", "attachments": []}
         args = MagicMock()
-        args.id = "1942932"
+        args.id = "1000001"
         args.child = None
         _news(args)
         captured = capsys.readouterr()
@@ -660,9 +660,9 @@ class TestNewsCommand:
         from deformentor_cli.cli import _news
         mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
         mock_login.return_value = MagicMock()
-        mock_fetch.return_value = {"id": 1942932, "title": "Test", "content": "", "attachments": []}
+        mock_fetch.return_value = {"id": 1000001, "title": "Test", "content": "", "attachments": []}
         args = MagicMock()
-        args.id = "1942932"
+        args.id = "1000001"
         args.child = "Astrid"
         _news(args)
         mock_switch.assert_called_once_with(mock_login.return_value, "Astrid")
@@ -676,14 +676,14 @@ class TestMeetingCommand:
         from deformentor_cli.cli import _meeting
         mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
         mock_login.return_value = MagicMock()
-        mock_fetch.return_value = {"totalCount": 1, "totalPages": 1, "availabilities": [{"availabilityId": 611165, "meetingType": "Utvecklingssamtal"}]}
+        mock_fetch.return_value = {"totalCount": 1, "totalPages": 1, "availabilities": [{"availabilityId": 3000001, "meetingType": "Utvecklingssamtal"}]}
         args = MagicMock()
         args.child = None
         _meeting(args)
         captured = capsys.readouterr()
         output = json.loads(captured.out)
         assert output["totalCount"] == 1
-        assert output["availabilities"][0]["availabilityId"] == 611165
+        assert output["availabilities"][0]["availabilityId"] == 3000001
 
     @patch("deformentor_cli.cli._resolve_and_switch_child")
     @patch("deformentor_cli.cli.get_meeting_availabilities")

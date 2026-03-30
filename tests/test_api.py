@@ -248,7 +248,7 @@ class TestNormalizeTypeName:
 
 class TestExtractIdFromUrl:
     def test_news_url(self):
-        assert _extract_id_from_url("/#/communication/news/1942932") == "1942932"
+        assert _extract_id_from_url("/#/communication/news/1000001") == "1000001"
 
     def test_attendance_url(self):
         assert _extract_id_from_url("/#/attendance/tab/leaveRequests/show/197608") == "197608"
@@ -385,7 +385,7 @@ class TestFetchAllNotifications:
                 "type": "NewsItem",
                 "title": "Skolnyhet",
                 "orderDate": "2026-03-29T10:00:00",
-                "url": "/#/communication/news/1942932",
+                "url": "/#/communication/news/1000001",
             },
         ]
 
@@ -689,7 +689,7 @@ class TestGetMeetingAvailabilities:
         payload = {
             "totalCount": 1,
             "totalPages": 1,
-            "availabilities": [{"availabilityId": 611165, "meetingId": 635646, "meetingType": "Utvecklingssamtal"}],
+            "availabilities": [{"availabilityId": 3000001, "meetingId": 4000001, "meetingType": "Utvecklingssamtal"}],
         }
         resp.json.return_value = payload
         session.post.return_value = resp
@@ -720,7 +720,7 @@ class TestGetAttachment:
         resp = MagicMock()
         resp.content = b"%PDF-1.4 test"
         session.get.return_value = resp
-        url_path = "/Resources/Resource/Download/18065702?api=IM2&ModuleType=NewsItem&ConnectionId=1942932"
+        url_path = "/Resources/Resource/Download/2000001?api=IM2&ModuleType=NewsItem&ConnectionId=1000001"
         get_attachment(session, url_path)
         called_url = session.get.call_args[0][0]
         assert called_url == f"https://hub.infomentor.se{url_path}"
@@ -846,18 +846,18 @@ class TestGetNewsDetail:
     def test_posts_to_get_news_list_url(self):
         session = MagicMock()
         resp = MagicMock()
-        resp.json.return_value = {"items": [{"id": 1942932, "title": "Test", "content": "<p>Body</p>", "attachments": []}]}
+        resp.json.return_value = {"items": [{"id": 1000001, "title": "Test", "content": "<p>Body</p>", "attachments": []}]}
         session.post.return_value = resp
-        get_news_detail(session, 1942932)
+        get_news_detail(session, 1000001)
         url = session.post.call_args[0][0]
         assert "/Communication/News/GetNewsList" in url
 
     def test_sends_page_size_minus_one(self):
         session = MagicMock()
         resp = MagicMock()
-        resp.json.return_value = {"items": [{"id": 1942932, "title": "Test", "content": "", "attachments": []}]}
+        resp.json.return_value = {"items": [{"id": 1000001, "title": "Test", "content": "", "attachments": []}]}
         session.post.return_value = resp
-        get_news_detail(session, 1942932)
+        get_news_detail(session, 1000001)
         kwargs = session.post.call_args[1]
         assert kwargs["json"]["pageSize"] == -1
 
@@ -866,12 +866,12 @@ class TestGetNewsDetail:
         resp = MagicMock()
         items = [
             {"id": 111, "title": "Other", "content": "x", "attachments": []},
-            {"id": 1942932, "title": "Veckobrev", "content": "<p>Text</p>", "attachments": [{"url": "/Resources/Resource/Download/123", "title": "doc.pdf", "fileType": None}]},
+            {"id": 1000001, "title": "Veckobrev", "content": "<p>Text</p>", "attachments": [{"url": "/Resources/Resource/Download/123", "title": "doc.pdf", "fileType": None}]},
         ]
         resp.json.return_value = {"items": items}
         session.post.return_value = resp
-        result = get_news_detail(session, 1942932)
-        assert result["id"] == 1942932
+        result = get_news_detail(session, 1000001)
+        assert result["id"] == 1000001
         assert result["title"] == "Veckobrev"
         assert len(result["attachments"]) == 1
 

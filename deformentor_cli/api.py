@@ -137,7 +137,7 @@ def get_attachment(session, url_path):
     """Fetch an attachment by its URL path and return raw bytes.
 
     url_path is the value from a news item's attachments[].url field,
-    e.g. '/Resources/Resource/Download/18065702?api=IM2&ModuleType=NewsItem&ConnectionId=1942932'
+    e.g. '/Resources/Resource/Download/2000001?api=IM2&ModuleType=NewsItem&ConnectionId=1000001'
     """
     resp = session.get(
         f"{BASE_URL}{url_path}",
