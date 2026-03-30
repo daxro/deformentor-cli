@@ -33,7 +33,8 @@ def _mask_personnummer(pnr):
     return pnr[2:6] + "****" + pnr[8:]
 
 
-def _status(args):
+def _get_status():
+    """Build status dict from config and session state."""
     config = dotenv_values(CONFIG_FILE)
     personnummer = config.get("PERSONNUMMER")
 
@@ -60,12 +61,12 @@ def _status(args):
         else:
             status["session"] = "none"
 
-    if args.json_output:
-        print(json.dumps(status, ensure_ascii=False, indent=2))
-        return
+    return status
 
-    # Human-readable output to stderr
-    if not personnummer:
+
+def _print_status(status):
+    """Print human-readable status to stderr."""
+    if not status["configured"]:
         emit_error("not_configured", "Not configured. Run: deformentor setup", exit_code=EXIT_AUTH)
 
     print(f"Personnummer: {status['personnummer']}", file=sys.stderr)
@@ -78,7 +79,15 @@ def _status(args):
         print("Children:", file=sys.stderr)
         for child in status["children"]:
             name = child["name"].split(", ")[-1] if ", " in child["name"] else child["name"]
-            print(f"  - {name} ({child['id']})", file=sys.stderr)
+            print(f"  - {name} (id: {child['id']})", file=sys.stderr)
+
+
+def _status(args):
+    status = _get_status()
+    if args.json_output:
+        print(json.dumps(status, ensure_ascii=False, indent=2))
+        return
+    _print_status(status)
 
 
 def _validate_date_flag(value, flag_name):
@@ -174,10 +183,13 @@ def _progress(message, quiet=False):
 
 
 def main():
-    parser = argparse.ArgumentParser(prog="deformentor")
+    parser = argparse.ArgumentParser(
+        prog="deformentor",
+        description="Fetch school notifications and messages from InfoMentor via Freja eID+.",
+    )
     parser.add_argument("--version", action="version", version="%(prog)s 0.1.0")
     parser.add_argument("-q", "--quiet", action="store_true", help="Suppress progress messages on stderr")
-    subparsers = parser.add_subparsers(dest="command")
+    subparsers = parser.add_subparsers(dest="command", title="commands")
     subparsers.add_parser("setup", help="Configure personnummer for login")
     notif_parser = subparsers.add_parser("notifications", help="Fetch notifications and messages for all children")
     notif_parser.add_argument("--child", help="Filter by child firstname")
@@ -240,6 +252,7 @@ def _setup(quiet=False):
         _write_config(f"PERSONNUMMER={personnummer}\n", quiet)
         login(personnummer, session_path=str(SESSION_FILE))
         _progress("Authenticated.", quiet)
+        _print_status(_get_status())
         return
 
     existing = dotenv_values(CONFIG_FILE).get("PERSONNUMMER") if CONFIG_FILE.exists() else None
@@ -249,6 +262,7 @@ def _setup(quiet=False):
         if answer != "y":
             login(existing, session_path=str(SESSION_FILE))
             _progress("Authenticated.", quiet)
+            _print_status(_get_status())
             return
 
     personnummer = input("Personnummer (12 digits): ").strip()
@@ -258,7 +272,8 @@ def _setup(quiet=False):
     _write_config(f"PERSONNUMMER={personnummer}\n", quiet)
 
     login(personnummer, session_path=str(SESSION_FILE))
-    _progress("Authenticated. Run: deformentor notifications", quiet)
+    _progress("Authenticated.", quiet)
+    _print_status(_get_status())
 
 
 def _get_session():
