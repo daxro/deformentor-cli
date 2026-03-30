@@ -14,8 +14,8 @@ from deformentor_cli.errors import (
     FrejaError, emit_error, EXIT_AUTH, EXIT_NETWORK, EXIT_NOT_FOUND, EXIT_USAGE,
 )
 from deformentor_cli.api import (
-    fetch_all_notifications, fetch_all_messages, get_attendance_detail, get_calendar_event,
-    get_children, get_meeting_availabilities, get_news_detail, switch_child,
+    fetch_all_notifications, fetch_all_messages, get_attachment, get_attendance_detail,
+    get_calendar_event, get_children, get_meeting_availabilities, get_news_detail, switch_child,
 )
 from deformentor_cli.paths import CONFIG_DIR, CONFIG_FILE, SESSION_FILE, STATE_DIR
 from deformentor_cli.session import login, new_session, load_session, verify_authenticated
@@ -211,6 +211,9 @@ def main():
     news_parser.add_argument("--child", help="Switch to this child's context before fetching")
     meeting_parser = subparsers.add_parser("meeting", help="Fetch meeting slot availabilities for a child")
     meeting_parser.add_argument("--child", help="Switch to this child's context before fetching")
+    att2_parser = subparsers.add_parser("attachment", help="Fetch an attachment and write bytes to stdout")
+    att2_parser.add_argument("url", help="Attachment URL path (from news detail attachments[].url)")
+    att2_parser.add_argument("--child", help="Switch to this child's context before fetching")
     status_parser = subparsers.add_parser("status", help="Show configuration and session status")
     status_parser.add_argument("--json", dest="json_output", action="store_true", help="Output status as JSON to stdout")
 
@@ -235,6 +238,8 @@ def main():
             _news(args)
         elif args.command == "meeting":
             _meeting(args)
+        elif args.command == "attachment":
+            _attachment(args)
         elif args.command == "status":
             _status(args)
     except FrejaError as e:
@@ -365,3 +370,12 @@ def _meeting(args):
     _progress("Fetching meeting availabilities...", args.quiet)
     result = get_meeting_availabilities(session)
     print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+def _attachment(args):
+    session = _get_session()
+    if args.child:
+        _resolve_and_switch_child(session, args.child)
+    _progress("Fetching attachment...", args.quiet)
+    data = get_attachment(session, args.url)
+    sys.stdout.buffer.write(data)

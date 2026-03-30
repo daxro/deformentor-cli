@@ -700,6 +700,49 @@ class TestMeetingCommand:
         mock_switch.assert_called_once_with(mock_login.return_value, "Felix")
 
 
+class TestAttachmentCommand:
+    @patch("deformentor_cli.cli.get_attachment")
+    @patch("deformentor_cli.cli.login")
+    @patch("deformentor_cli.cli.dotenv_values")
+    def test_writes_bytes_to_stdout(self, mock_dotenv, mock_login, mock_fetch):
+        from io import BytesIO
+        from unittest.mock import patch as mpatch
+        from deformentor_cli.cli import _attachment
+        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_login.return_value = MagicMock()
+        mock_fetch.return_value = b"%PDF-1.4 test"
+        args = MagicMock()
+        args.url = "/Resources/Resource/Download/123?api=IM2"
+        args.child = None
+        buf = BytesIO()
+        fake_stdout = MagicMock()
+        fake_stdout.buffer = buf
+        with mpatch("sys.stdout", fake_stdout):
+            _attachment(args)
+        assert buf.getvalue() == b"%PDF-1.4 test"
+
+    @patch("deformentor_cli.cli._resolve_and_switch_child")
+    @patch("deformentor_cli.cli.get_attachment")
+    @patch("deformentor_cli.cli.login")
+    @patch("deformentor_cli.cli.dotenv_values")
+    def test_switches_child_when_provided(self, mock_dotenv, mock_login, mock_fetch, mock_switch):
+        from io import BytesIO
+        from unittest.mock import patch as mpatch
+        from deformentor_cli.cli import _attachment
+        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_login.return_value = MagicMock()
+        mock_fetch.return_value = b""
+        args = MagicMock()
+        args.url = "/Resources/Resource/Download/123?api=IM2"
+        args.child = "Astrid"
+        buf = BytesIO()
+        fake_stdout = MagicMock()
+        fake_stdout.buffer = buf
+        with mpatch("sys.stdout", fake_stdout):
+            _attachment(args)
+        mock_switch.assert_called_once_with(mock_login.return_value, "Astrid")
+
+
 class TestQuietMode:
     @patch("deformentor_cli.cli.date")
     @patch("deformentor_cli.cli.fetch_all_notifications")
