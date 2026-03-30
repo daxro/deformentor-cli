@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from deformentor_cli.api import get_children, switch_child, get_notifications, get_messages, get_attendance_detail, get_calendar_event, get_news_detail, fetch_all_notifications, fetch_all_messages
+from deformentor_cli.api import get_children, switch_child, get_notifications, get_messages, get_attendance_detail, get_calendar_event, get_news_detail, get_meeting_availabilities, fetch_all_notifications, fetch_all_messages
 from deformentor_cli.api import _normalize_type_name, _extract_id_from_url, _normalize_notification, _normalize_message, _normalize_message_summary
 
 
@@ -662,6 +662,56 @@ class TestFetchAllMessages:
         switch_urls = [c[0][0] for c in session.get.call_args_list[1:]]
         assert any("5001001" in u for u in switch_urls)
         assert any("5002002" in u for u in switch_urls)
+
+
+class TestGetMeetingAvailabilities:
+    def test_posts_to_correct_url(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.json.return_value = {"totalCount": 0, "totalPages": 0, "availabilities": []}
+        session.post.return_value = resp
+        get_meeting_availabilities(session)
+        url = session.post.call_args[0][0]
+        assert "/Home/meeting/GetPupilAvailabilities" in url
+
+    def test_sends_empty_body(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.json.return_value = {"totalCount": 0, "totalPages": 0, "availabilities": []}
+        session.post.return_value = resp
+        get_meeting_availabilities(session)
+        kwargs = session.post.call_args[1]
+        assert kwargs["json"] == {}
+
+    def test_returns_json_response(self):
+        session = MagicMock()
+        resp = MagicMock()
+        payload = {
+            "totalCount": 1,
+            "totalPages": 1,
+            "availabilities": [{"availabilityId": 611165, "meetingId": 635646, "meetingType": "Utvecklingssamtal"}],
+        }
+        resp.json.return_value = payload
+        session.post.return_value = resp
+        result = get_meeting_availabilities(session)
+        assert result == payload
+
+    def test_sends_ajax_header(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.json.return_value = {"totalCount": 0, "totalPages": 0, "availabilities": []}
+        session.post.return_value = resp
+        get_meeting_availabilities(session)
+        headers = session.post.call_args[1].get("headers", {})
+        assert headers.get("X-Requested-With") == "XMLHttpRequest"
+
+    def test_raises_on_http_error(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.raise_for_status.side_effect = Exception("500 Error")
+        session.post.return_value = resp
+        with pytest.raises(Exception, match="500"):
+            get_meeting_availabilities(session)
 
 
 class TestGetAttendanceDetail:

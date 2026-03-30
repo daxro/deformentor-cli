@@ -133,6 +133,24 @@ def get_news_detail(session, news_id):
     return next((item for item in items if item["id"] == int(news_id)), None)
 
 
+def get_meeting_availabilities(session):
+    """Fetch meeting slot availabilities for the current child context.
+
+    Returns a dict with totalCount, totalPages, and availabilities list.
+    Each availability has: availabilityId, date, timeFrom, stringDate,
+    timeRange, registeredBy, meetingType, location, meetingId (int if
+    booked, None if not), meetingLink, bookingsCloseBefore.
+    """
+    resp = session.post(
+        f"{BASE_URL}/Home/meeting/GetPupilAvailabilities",
+        json={},
+        headers=AJAX_HEADERS,
+        timeout=HTTP_TIMEOUT,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
 def _extract_id_from_url(url):
     """Extract ID from notification URL hash route. Returns str or None.
 
