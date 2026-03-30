@@ -668,6 +668,38 @@ class TestNewsCommand:
         mock_switch.assert_called_once_with(mock_login.return_value, "Astrid")
 
 
+class TestMeetingCommand:
+    @patch("deformentor_cli.cli.get_meeting_availabilities")
+    @patch("deformentor_cli.cli.login")
+    @patch("deformentor_cli.cli.dotenv_values")
+    def test_outputs_json_to_stdout(self, mock_dotenv, mock_login, mock_fetch, capsys):
+        from deformentor_cli.cli import _meeting
+        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_login.return_value = MagicMock()
+        mock_fetch.return_value = {"totalCount": 1, "totalPages": 1, "availabilities": [{"availabilityId": 611165, "meetingType": "Utvecklingssamtal"}]}
+        args = MagicMock()
+        args.child = None
+        _meeting(args)
+        captured = capsys.readouterr()
+        output = json.loads(captured.out)
+        assert output["totalCount"] == 1
+        assert output["availabilities"][0]["availabilityId"] == 611165
+
+    @patch("deformentor_cli.cli._resolve_and_switch_child")
+    @patch("deformentor_cli.cli.get_meeting_availabilities")
+    @patch("deformentor_cli.cli.login")
+    @patch("deformentor_cli.cli.dotenv_values")
+    def test_switches_child_when_provided(self, mock_dotenv, mock_login, mock_fetch, mock_switch, capsys):
+        from deformentor_cli.cli import _meeting
+        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_login.return_value = MagicMock()
+        mock_fetch.return_value = {"totalCount": 0, "totalPages": 0, "availabilities": []}
+        args = MagicMock()
+        args.child = "Felix"
+        _meeting(args)
+        mock_switch.assert_called_once_with(mock_login.return_value, "Felix")
+
+
 class TestQuietMode:
     @patch("deformentor_cli.cli.date")
     @patch("deformentor_cli.cli.fetch_all_notifications")
