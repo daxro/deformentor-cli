@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from deformentor_cli.api import get_children, switch_child, get_notifications, get_messages, get_attendance_detail, get_calendar_event, fetch_all_notifications, fetch_all_messages
+from deformentor_cli.api import get_children, switch_child, get_notifications, get_messages, get_attendance_detail, get_calendar_event, get_news_detail, fetch_all_notifications, fetch_all_messages
 from deformentor_cli.api import _normalize_type_name, _extract_id_from_url, _normalize_notification, _normalize_message, _normalize_message_summary
 
 
@@ -752,3 +752,62 @@ class TestGetCalendarEvent:
         session.post.return_value = resp
         with pytest.raises(Exception, match="404"):
             get_calendar_event(session, "99999")
+
+
+class TestGetNewsDetail:
+    def test_posts_to_get_news_list_url(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.json.return_value = {"items": [{"id": 1942932, "title": "Test", "content": "<p>Body</p>", "attachments": []}]}
+        session.post.return_value = resp
+        get_news_detail(session, 1942932)
+        url = session.post.call_args[0][0]
+        assert "/Communication/News/GetNewsList" in url
+
+    def test_sends_page_size_minus_one(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.json.return_value = {"items": [{"id": 1942932, "title": "Test", "content": "", "attachments": []}]}
+        session.post.return_value = resp
+        get_news_detail(session, 1942932)
+        kwargs = session.post.call_args[1]
+        assert kwargs["json"]["pageSize"] == -1
+
+    def test_returns_matching_item(self):
+        session = MagicMock()
+        resp = MagicMock()
+        items = [
+            {"id": 111, "title": "Other", "content": "x", "attachments": []},
+            {"id": 1942932, "title": "Veckobrev", "content": "<p>Text</p>", "attachments": [{"url": "/Resources/Resource/Download/123", "title": "doc.pdf", "fileType": None}]},
+        ]
+        resp.json.return_value = {"items": items}
+        session.post.return_value = resp
+        result = get_news_detail(session, 1942932)
+        assert result["id"] == 1942932
+        assert result["title"] == "Veckobrev"
+        assert len(result["attachments"]) == 1
+
+    def test_returns_none_when_not_found(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.json.return_value = {"items": [{"id": 111, "title": "Other", "content": "", "attachments": []}]}
+        session.post.return_value = resp
+        result = get_news_detail(session, 9999)
+        assert result is None
+
+    def test_sends_ajax_header(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.json.return_value = {"items": []}
+        session.post.return_value = resp
+        get_news_detail(session, 1)
+        headers = session.post.call_args[1].get("headers", {})
+        assert headers.get("X-Requested-With") == "XMLHttpRequest"
+
+    def test_raises_on_http_error(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.raise_for_status.side_effect = Exception("500 Error")
+        session.post.return_value = resp
+        with pytest.raises(Exception, match="500"):
+            get_news_detail(session, 1)

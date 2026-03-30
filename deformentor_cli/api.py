@@ -116,6 +116,23 @@ def get_calendar_event(session, event_id):
     return resp.json()
 
 
+def get_news_detail(session, news_id):
+    """Fetch a single news item by ID.
+
+    Calls GetNewsList (which returns all items with full content) and filters
+    by id client-side. Returns the matching item dict, or None if not found.
+    """
+    resp = session.post(
+        f"{BASE_URL}/Communication/News/GetNewsList",
+        json={"pageSize": -1, "sortBy": "lastPublishDate___SORT_DESC"},
+        headers=AJAX_HEADERS,
+        timeout=HTTP_TIMEOUT,
+    )
+    resp.raise_for_status()
+    items = resp.json().get("items", [])
+    return next((item for item in items if item["id"] == news_id), None)
+
+
 def _extract_id_from_url(url):
     """Extract ID from notification URL hash route. Returns str or None.
 
