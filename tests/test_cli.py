@@ -620,6 +620,54 @@ class TestCalendarCommand:
         mock_switch.assert_called_once_with(mock_login.return_value, "Astrid")
 
 
+class TestNewsCommand:
+    @patch("deformentor_cli.cli.get_news_detail")
+    @patch("deformentor_cli.cli.login")
+    @patch("deformentor_cli.cli.dotenv_values")
+    def test_outputs_json_to_stdout(self, mock_dotenv, mock_login, mock_fetch, capsys):
+        from deformentor_cli.cli import _news
+        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_login.return_value = MagicMock()
+        mock_fetch.return_value = {"id": 1942932, "title": "Veckobrev", "content": "<p>Text</p>", "attachments": []}
+        args = MagicMock()
+        args.id = "1942932"
+        args.child = None
+        _news(args)
+        captured = capsys.readouterr()
+        output = json.loads(captured.out)
+        assert output["title"] == "Veckobrev"
+
+    @patch("deformentor_cli.cli.get_news_detail")
+    @patch("deformentor_cli.cli.login")
+    @patch("deformentor_cli.cli.dotenv_values")
+    def test_exits_when_not_found(self, mock_dotenv, mock_login, mock_fetch, capsys):
+        from deformentor_cli.cli import _news
+        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_login.return_value = MagicMock()
+        mock_fetch.return_value = None
+        args = MagicMock()
+        args.id = "9999"
+        args.child = None
+        with pytest.raises(SystemExit) as exc_info:
+            _news(args)
+        assert exc_info.value.code == 4
+
+    @patch("deformentor_cli.cli._resolve_and_switch_child")
+    @patch("deformentor_cli.cli.get_news_detail")
+    @patch("deformentor_cli.cli.login")
+    @patch("deformentor_cli.cli.dotenv_values")
+    def test_switches_child_when_provided(self, mock_dotenv, mock_login, mock_fetch, mock_switch, capsys):
+        from deformentor_cli.cli import _news
+        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_login.return_value = MagicMock()
+        mock_fetch.return_value = {"id": 1942932, "title": "Test", "content": "", "attachments": []}
+        args = MagicMock()
+        args.id = "1942932"
+        args.child = "Astrid"
+        _news(args)
+        mock_switch.assert_called_once_with(mock_login.return_value, "Astrid")
+
+
 class TestQuietMode:
     @patch("deformentor_cli.cli.date")
     @patch("deformentor_cli.cli.fetch_all_notifications")

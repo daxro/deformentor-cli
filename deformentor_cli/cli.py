@@ -15,7 +15,7 @@ from deformentor_cli.errors import (
 )
 from deformentor_cli.api import (
     fetch_all_notifications, fetch_all_messages, get_attendance_detail, get_calendar_event,
-    get_children, switch_child,
+    get_children, get_news_detail, switch_child,
 )
 from deformentor_cli.paths import CONFIG_DIR, CONFIG_FILE, SESSION_FILE, STATE_DIR
 from deformentor_cli.session import login, new_session, load_session, verify_authenticated
@@ -206,6 +206,9 @@ def main():
     att_parser = subparsers.add_parser("attendance", help="Fetch an attendance / leave request by ID")
     att_parser.add_argument("id", help="Attendance/leave request ID (from notifications output)")
     att_parser.add_argument("--child", help="Switch to this child's context before fetching")
+    news_parser = subparsers.add_parser("news", help="Fetch a news item by ID")
+    news_parser.add_argument("id", help="News item ID (from notifications output)")
+    news_parser.add_argument("--child", help="Switch to this child's context before fetching")
     status_parser = subparsers.add_parser("status", help="Show configuration and session status")
     status_parser.add_argument("--json", dest="json_output", action="store_true", help="Output status as JSON to stdout")
 
@@ -226,6 +229,8 @@ def main():
             _calendar(args)
         elif args.command == "attendance":
             _attendance(args)
+        elif args.command == "news":
+            _news(args)
         elif args.command == "status":
             _status(args)
     except FrejaError as e:
@@ -335,4 +340,15 @@ def _attendance(args):
         _resolve_and_switch_child(session, args.child)
     _progress("Fetching attendance detail...", args.quiet)
     result = get_attendance_detail(session, args.id)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+def _news(args):
+    session = _get_session()
+    if args.child:
+        _resolve_and_switch_child(session, args.child)
+    _progress("Fetching news item...", args.quiet)
+    result = get_news_detail(session, int(args.id))
+    if result is None:
+        emit_error("not_found", f"News item {args.id} not found.", exit_code=EXIT_NOT_FOUND)
     print(json.dumps(result, ensure_ascii=False, indent=2))
