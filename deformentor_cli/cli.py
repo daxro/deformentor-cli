@@ -348,7 +348,7 @@ def _news(args):
     if args.child:
         _resolve_and_switch_child(session, args.child)
     _progress("Fetching news item...", args.quiet)
-    result = get_news_detail(session, int(args.id))
+    result = get_news_detail(session, args.id)
     if result is None:
         emit_error("not_found", f"News item {args.id} not found.", exit_code=EXIT_NOT_FOUND)
     print(json.dumps(result, ensure_ascii=False, indent=2))

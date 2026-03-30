@@ -130,7 +130,7 @@ def get_news_detail(session, news_id):
     )
     resp.raise_for_status()
     items = resp.json().get("items", [])
-    return next((item for item in items if item["id"] == news_id), None)
+    return next((item for item in items if item["id"] == int(news_id)), None)
 
 
 def _extract_id_from_url(url):
