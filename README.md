@@ -55,12 +55,12 @@ uv run deformentor setup
 ## Usage
 
 ```bash
-deformentor notifications                  # last 30 days of notifications
+deformentor notifications                  # notifications (default: last 30 days)
 deformentor notifications --since all      # all notifications, no date limit
 deformentor notifications --child Anna     # filter by child
 deformentor notifications --type calendar  # filter by type
 deformentor notifications --since 2026-01-01 --until 2026-03-31
-deformentor messages                       # messages only (last 30 days)
+deformentor messages                       # messages (default: last 30 days)
 deformentor messages --all-pages           # fetch all message pages
 deformentor messages --all-pages --max-pages 10  # fetch up to 10 pages
 deformentor calendar <id>                  # calendar event detail
@@ -126,7 +126,7 @@ Optional config variables in `config.env`:
 |------|---------|
 | 0 | Success |
 | 1 | General error |
-| 2 | Invalid input |
+| 2 | Invalid input / usage error |
 | 3 | Authentication error |
 | 4 | Resource not found |
 | 5 | Network error |
@@ -134,7 +134,7 @@ Optional config variables in `config.env`:
 Errors are emitted as JSON to stderr:
 
 ```json
-{"error": "auth_failed", "message": "Freja authentication failed: Rejected"}
+{"error": "auth_failed", "message": "Freja authentication failed: Authentication was rejected in the Freja app"}
 ```
 
 For agents: sessions expire and the CLI re-authenticates automatically, which requires phone approval. If a command hangs or returns exit code 3, tell the user to check their phone for a Freja prompt. `-q` suppresses the "approve in Freja" stderr message, so assume re-auth is in progress. Setup only needs re-running if the error contains `"not_configured"` - expired sessions are handled automatically.
