@@ -377,11 +377,9 @@ def main():
     att2_parser = subparsers.add_parser("attachment", parents=[_quiet],
         help="Fetch an attachment and write bytes to stdout",
         epilog="""examples:
-  deformentor attachment "/Resources/Resource/Download/123?api=IM2" > doc.pdf
   deformentor attachment --url "/Resources/Resource/Download/123?api=IM2" > doc.pdf""",
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    att2_parser.add_argument("url", nargs="?", default=None, help="Attachment URL path (positional, deprecated - use --url)")
-    att2_parser.add_argument("--url", dest="url_flag", help="Attachment URL path (from news detail attachments[].url)")
+    att2_parser.add_argument("--url", required=True, help="Attachment URL path (from news detail attachments[].url)")
     att2_parser.add_argument("--child", help="Switch to this child's context before fetching")
     status_parser = subparsers.add_parser("status", parents=[_quiet], help="Show configuration and session status")
     status_parser.add_argument("--json", dest="json_output", action="store_true", help="Output status as JSON to stdout")
@@ -555,17 +553,14 @@ def _meeting(args):
 
 
 def _attachment(args):
+    if sys.stdout.isatty():
+        emit_error("usage_error", "Binary output. Redirect to a file: deformentor attachment --url <path> > file.pdf", exit_code=EXIT_USAGE)
     session = _get_session(quiet=args.quiet)
     if args.child:
         _resolve_and_switch_child(session, args.child)
-    url = getattr(args, "url_flag", None) or args.url
-    if url is None:
-        emit_error("usage_error", "attachment requires a URL. Use: deformentor attachment --url <path>", exit_code=EXIT_USAGE)
-    if args.url and not getattr(args, "url_flag", None):
-        print("Warning: positional URL argument is deprecated. Use --url instead.", file=sys.stderr)
     _progress("Fetching attachment...", args.quiet)
     try:
-        data = get_attachment(session, url)
+        data = get_attachment(session, args.url)
     except ValueError as e:
         emit_error("invalid_input", str(e), exit_code=EXIT_USAGE)
     if not data:
