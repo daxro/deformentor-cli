@@ -2,6 +2,8 @@
 
 An unofficial CLI for InfoMentor, using Freja eID+ for login. Outputs JSON to stdout.
 
+AI agents and automated scripts: see [AGENTS.md](AGENTS.md).
+
 ## Prerequisites
 
 - Python 3.10+
