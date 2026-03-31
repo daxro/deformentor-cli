@@ -940,6 +940,19 @@ class TestColorSafety:
         assert args.no_color is True
 
 
+class TestStatusQuiet:
+    def test_status_subparser_accepts_quiet_flag(self):
+        import argparse
+        parser = argparse.ArgumentParser(add_help=False)
+        parser.add_argument("-q", "--quiet", action="store_true")
+        _quiet = argparse.ArgumentParser(add_help=False)
+        _quiet.add_argument("-q", "--quiet", action="store_true")
+        sub = parser.add_subparsers(dest="command")
+        sub.add_parser("status", parents=[_quiet])
+        args = parser.parse_args(["status", "-q"])
+        assert args.quiet is True
+
+
 class TestHelpOutput:
     def test_help_flag_prints_help_to_stdout(self, capsys):
         import sys as _sys

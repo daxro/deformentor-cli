@@ -278,7 +278,7 @@ def main():
     att2_parser = subparsers.add_parser("attachment", parents=[_quiet], help="Fetch an attachment and write bytes to stdout")
     att2_parser.add_argument("url", help="Attachment URL path (from news detail attachments[].url)")
     att2_parser.add_argument("--child", help="Switch to this child's context before fetching")
-    status_parser = subparsers.add_parser("status", help="Show configuration and session status")
+    status_parser = subparsers.add_parser("status", parents=[_quiet], help="Show configuration and session status")
     status_parser.add_argument("--json", dest="json_output", action="store_true", help="Output status as JSON to stdout")
 
     args = parser.parse_args()
