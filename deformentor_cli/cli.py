@@ -18,6 +18,25 @@ from deformentor_cli.api import (
     get_calendar_event, get_children, get_meeting_availabilities, get_news_detail, switch_child,
 )
 from deformentor_cli.paths import CONFIG_DIR, CONFIG_FILE, SESSION_FILE, STATE_DIR
+
+_LOGO_LINES = [
+    r"    _      __                       _               ___ _    ___ ",
+    r" __| |___ / _|___ _ _ _ __  ___ _ _| |_ ___ _ _    / __| |  |_ _|",
+    r"/ _` / -_)  _/ _ \ '_| '  \/ -_) ' \  _/ _ \ '_|  | (__| |__ | | ",
+    r"\__,_\___|_| \___/_| |_|_|_\___|_||_\__\___/_|     \___|____|___|",
+]
+_CYAN = "\033[36m"
+_BOLD_WHITE = "\033[1m\033[97m"
+_RESET = "\033[0m"
+# Split point: "deformentor" block width is 49 chars, then 2 spaces, then "CLI" block
+_SPLIT = 49
+
+
+def print_logo():
+    for line in _LOGO_LINES:
+        main_part = line[:_SPLIT]
+        cli_part = line[_SPLIT + 2:] if len(line) > _SPLIT + 2 else ""
+        print(f"{_CYAN}{main_part}{_RESET}  {_BOLD_WHITE}{cli_part}{_RESET}", file=sys.stderr)
 from deformentor_cli.session import login, new_session, load_session, verify_authenticated
 
 KNOWN_NOTIFICATION_TYPES = {"attendance", "calendar", "news", "meeting", "message"}
@@ -182,11 +201,23 @@ def _progress(message, quiet=False):
         print(message, file=sys.stderr)
 
 
+class _LogoHelpAction(argparse.Action):
+    def __init__(self, option_strings, dest=argparse.SUPPRESS, default=argparse.SUPPRESS, help=None):
+        super().__init__(option_strings=option_strings, dest=dest, default=default, nargs=0, help=help)
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        print_logo()
+        parser.print_help(sys.stderr)
+        parser.exit()
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="deformentor",
         description="Fetch school notifications and messages from InfoMentor via Freja eID+.",
+        add_help=False,
     )
+    parser.add_argument("-h", "--help", action=_LogoHelpAction, help="Show this message and exit")
     parser.add_argument("--version", action="version", version="%(prog)s 0.1.0")
     parser.add_argument("-q", "--quiet", action="store_true", help="Suppress progress messages on stderr")
 
@@ -225,7 +256,8 @@ def main():
     args = parser.parse_args()
 
     if args.command is None:
-        parser.print_help()
+        print_logo()
+        parser.print_help(sys.stderr)
         sys.exit(1)
 
     try:
@@ -258,6 +290,8 @@ def main():
 
 
 def _setup(quiet=False):
+    if sys.stdin.isatty():
+        print_logo()
     if not sys.stdin.isatty():
         personnummer = os.environ.get("PERSONNUMMER")
         if not personnummer:
