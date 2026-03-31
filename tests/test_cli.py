@@ -938,3 +938,34 @@ class TestColorSafety:
         sub.add_parser("status")
         args = parser.parse_args(["--no-color", "status"])
         assert args.no_color is True
+
+
+class TestHelpOutput:
+    def test_help_flag_prints_help_to_stdout(self, capsys):
+        import sys as _sys
+        from deformentor_cli.cli import main
+        with pytest.raises(SystemExit) as exc_info:
+            _sys.argv = ["deformentor", "--help"]
+            main()
+        assert exc_info.value.code == 0
+        captured = capsys.readouterr()
+        assert "usage:" in captured.out.lower() or "commands:" in captured.out.lower()
+
+    def test_no_args_prints_help_to_stdout(self, capsys):
+        import sys as _sys
+        from deformentor_cli.cli import main
+        with pytest.raises(SystemExit) as exc_info:
+            _sys.argv = ["deformentor"]
+            main()
+        assert exc_info.value.code == 1
+        captured = capsys.readouterr()
+        assert "usage:" in captured.out.lower() or "commands:" in captured.out.lower()
+
+    def test_logo_still_goes_to_stderr(self, capsys, monkeypatch):
+        monkeypatch.delenv("NO_COLOR", raising=False)
+        from deformentor_cli.cli import print_logo, _LOGO_LINES
+        print_logo(use_color=False)
+        captured = capsys.readouterr()
+        # logo content (ASCII art) goes to stderr, not stdout
+        assert len(captured.err.strip()) > 0
+        assert captured.out == ""

@@ -234,7 +234,7 @@ class _LogoHelpAction(argparse.Action):
     def __call__(self, parser, namespace, values, option_string=None):
         use_color = _should_use_color(getattr(namespace, "no_color", False))
         print_logo(use_color)
-        parser.print_help(sys.stderr)
+        parser.print_help(sys.stdout)
         parser.exit()
 
 
@@ -286,7 +286,7 @@ def main():
     if args.command is None:
         use_color = _should_use_color(getattr(args, "no_color", False))
         print_logo(use_color)
-        parser.print_help(sys.stderr)
+        parser.print_help(sys.stdout)
         sys.exit(1)
 
     try:
