@@ -940,6 +940,35 @@ class TestColorSafety:
         assert args.no_color is True
 
 
+class TestArgparseErrorFormat:
+    def test_invalid_subcommand_emits_json_error(self, capsys):
+        import sys
+        from deformentor_cli.cli import main
+        sys.argv = ["deformentor", "nonexistent"]
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+        assert exc_info.value.code == 2
+        captured = capsys.readouterr()
+        err_lines = [l for l in captured.err.strip().splitlines() if l.startswith("{")]
+        assert len(err_lines) >= 1
+        err = json.loads(err_lines[-1])
+        assert err["error"] == "usage_error"
+        assert "message" in err
+
+    def test_missing_required_arg_emits_json_error(self, capsys):
+        import sys
+        from deformentor_cli.cli import main
+        sys.argv = ["deformentor", "calendar"]
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+        assert exc_info.value.code == 2
+        captured = capsys.readouterr()
+        err_lines = [l for l in captured.err.strip().splitlines() if l.startswith("{")]
+        assert len(err_lines) >= 1
+        err = json.loads(err_lines[-1])
+        assert err["error"] == "usage_error"
+
+
 class TestVersion:
     def test_version_matches_pyproject(self):
         from importlib.metadata import version

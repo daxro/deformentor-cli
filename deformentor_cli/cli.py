@@ -236,6 +236,15 @@ def _get_version():
         return "0.1.0-dev"
 
 
+class _DeformentorParser(argparse.ArgumentParser):
+    """ArgumentParser that emits JSON errors to stderr."""
+
+    def error(self, message):
+        error = {"error": "usage_error", "message": message}
+        print(json.dumps(error), file=sys.stderr)
+        self.exit(EXIT_USAGE)
+
+
 class _LogoHelpAction(argparse.Action):
     def __init__(self, option_strings, dest=argparse.SUPPRESS, default=argparse.SUPPRESS, help=None):
         super().__init__(option_strings=option_strings, dest=dest, default=default, nargs=0, help=help)
@@ -248,7 +257,7 @@ class _LogoHelpAction(argparse.Action):
 
 
 def main():
-    parser = argparse.ArgumentParser(
+    parser = _DeformentorParser(
         prog="deformentor",
         description="Fetch school notifications and messages from InfoMentor via Freja eID+.",
         add_help=False,
@@ -262,7 +271,7 @@ def main():
     _quiet = argparse.ArgumentParser(add_help=False)
     _quiet.add_argument("-q", "--quiet", action="store_true", help="Suppress progress messages on stderr")
 
-    subparsers = parser.add_subparsers(dest="command", title="commands")
+    subparsers = parser.add_subparsers(dest="command", title="commands", parser_class=_DeformentorParser)
     subparsers.add_parser("setup", parents=[_quiet], help="Configure personnummer for login")
     notif_parser = subparsers.add_parser("notifications", parents=[_quiet], help="Fetch notifications and messages for all children")
     notif_parser.add_argument("--child", help="Filter by child firstname")
