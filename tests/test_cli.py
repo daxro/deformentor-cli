@@ -922,3 +922,26 @@ class TestEmitError:
         with pytest.raises(SystemExit) as exc_info:
             emit_error("unknown", "Something broke")
         assert exc_info.value.code == 1
+
+
+class TestNoInputFlag:
+    def test_no_input_flag_accepted_by_parser(self):
+        import argparse
+        parser = argparse.ArgumentParser(add_help=False)
+        parser.add_argument("--no-input", action="store_true")
+        sub = parser.add_subparsers(dest="command")
+        sub.add_parser("setup")
+        args = parser.parse_args(["--no-input", "setup"])
+        assert args.no_input is True
+
+    @patch("deformentor_cli.cli.login")
+    def test_setup_no_input_uses_env_var(self, mock_login, monkeypatch, capsys):
+        from deformentor_cli.cli import _setup
+        monkeypatch.setenv("PERSONNUMMER", "200001011234")
+        monkeypatch.setattr("sys.stdin", MagicMock(isatty=lambda: True))
+        mock_login.return_value = MagicMock()
+        with patch("deformentor_cli.cli._get_status") as mock_status, \
+             patch("deformentor_cli.cli._print_status"):
+            mock_status.return_value = {"configured": True, "personnummer": "0001****1234", "session": "valid", "children": []}
+            _setup(quiet=True, no_input=True)
+        mock_login.assert_called_once()

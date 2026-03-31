@@ -220,6 +220,7 @@ def main():
     parser.add_argument("-h", "--help", action=_LogoHelpAction, help="Show this message and exit")
     parser.add_argument("--version", action="version", version="%(prog)s 0.1.0")
     parser.add_argument("-q", "--quiet", action="store_true", help="Suppress progress messages on stderr")
+    parser.add_argument("--no-input", action="store_true", help="Never prompt for input (fail if input would be needed)")
 
     # Shared parent parser so -q is accepted after the subcommand name too
     _quiet = argparse.ArgumentParser(add_help=False)
@@ -265,7 +266,7 @@ def main():
 
     try:
         if args.command == "setup":
-            _setup(quiet=args.quiet)
+            _setup(quiet=args.quiet, no_input=getattr(args, "no_input", False))
         elif args.command == "notifications":
             _notifications(args)
         elif args.command == "messages":
@@ -292,10 +293,10 @@ def main():
         emit_error("connection_failed", "Connection failed. Check your network.", exit_code=EXIT_NETWORK)
 
 
-def _setup(quiet=False):
-    if sys.stdin.isatty():
+def _setup(quiet=False, no_input=False):
+    if not no_input and sys.stdin.isatty():
         print_logo()
-    if not sys.stdin.isatty():
+    if no_input or not sys.stdin.isatty():
         personnummer = os.environ.get("PERSONNUMMER")
         if not personnummer:
             emit_error(
@@ -306,7 +307,7 @@ def _setup(quiet=False):
         if not personnummer.isdigit() or len(personnummer) != 12:
             emit_error("invalid_input", "Invalid personnummer. Must be 12 digits (YYYYMMDDXXXX).", exit_code=EXIT_USAGE)
         _write_config(f"PERSONNUMMER={personnummer}\n", quiet)
-        login(personnummer, session_path=str(SESSION_FILE))
+        login(personnummer, session_path=str(SESSION_FILE), quiet=quiet)
         _progress("Authenticated.", quiet)
         _print_status(_get_status())
         return
