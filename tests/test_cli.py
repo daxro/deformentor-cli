@@ -19,7 +19,7 @@ class TestGetSession:
         result = _get_session()
 
         assert result is mock_session
-        mock_login.assert_called_once_with("200001011234", session_path=str(SESSION_FILE))
+        mock_login.assert_called_once_with("200001011234", session_path=str(SESSION_FILE), quiet=False)
 
     @patch("deformentor_cli.cli.dotenv_values")
     def test_exits_on_missing_personnummer(self, mock_dotenv, capsys):
@@ -30,6 +30,18 @@ class TestGetSession:
         with pytest.raises(SystemExit) as exc_info:
             _get_session()
         assert exc_info.value.code == 3
+
+
+class TestGetSessionQuiet:
+    @patch("deformentor_cli.cli.login")
+    @patch("deformentor_cli.cli.dotenv_values")
+    def test_passes_quiet_to_login(self, mock_dotenv, mock_login):
+        from deformentor_cli.cli import _get_session, SESSION_FILE
+        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_session = MagicMock()
+        mock_login.return_value = mock_session
+        _get_session(quiet=True)
+        mock_login.assert_called_once_with("200001011234", session_path=str(SESSION_FILE), quiet=True)
 
 
 class TestValidateDateFlag:

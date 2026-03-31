@@ -269,6 +269,22 @@ class TestLogin:
         assert "isauthenticated" in last_post[0][0]
 
 
+class TestLoginQuiet:
+    @patch("deformentor_cli.session.freja_login")
+    def test_login_prints_progress_by_default(self, mock_freja, capsys):
+        session = TestLogin()._build_mock_session()
+        login("0001011234", _session=session)
+        captured = capsys.readouterr()
+        assert "logging in" in captured.err.lower()
+
+    @patch("deformentor_cli.session.freja_login")
+    def test_login_suppresses_progress_when_quiet(self, mock_freja, capsys):
+        session = TestLogin()._build_mock_session()
+        login("0001011234", _session=session, quiet=True)
+        captured = capsys.readouterr()
+        assert "logging in" not in captured.err.lower()
+
+
 class TestSessionPersistence:
     def test_save_and_load_roundtrip(self):
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:

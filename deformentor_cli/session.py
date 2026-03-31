@@ -91,7 +91,7 @@ def handle_saml_chain(session, html, page_url, max_hops=10):
 
 
 
-def login(personnummer, _session=None, session_path=None):
+def login(personnummer, _session=None, session_path=None, quiet=False):
     """Log into InfoMentor via Stockholms stad Freja eID+.
 
     Creates a requests.Session, navigates the InfoMentor -> Stockholms stad
@@ -123,7 +123,8 @@ def login(personnummer, _session=None, session_path=None):
         except Exception:
             session = _session or new_session()
 
-    print("Logging in - approve in Freja on your phone...", file=sys.stderr)
+    if not quiet:
+        print("Logging in - approve in Freja on your phone...", file=sys.stderr)
 
     # Step 1: Get oauth_token from hub
     resp = session.get(

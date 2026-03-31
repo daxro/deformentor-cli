@@ -329,20 +329,20 @@ def _setup(quiet=False):
     _print_status(_get_status())
 
 
-def _get_session():
+def _get_session(quiet=False):
     """Authenticate and return a session. Exits if not configured."""
     config = dotenv_values(CONFIG_FILE)
     personnummer = config.get("PERSONNUMMER")
     if not personnummer:
         emit_error("not_configured", "PERSONNUMMER not set. Run: deformentor setup", exit_code=EXIT_AUTH)
-    return login(personnummer, session_path=str(SESSION_FILE))
+    return login(personnummer, session_path=str(SESSION_FILE), quiet=quiet)
 
 
 def _notifications(args):
     config = dotenv_values(CONFIG_FILE)
     since = _resolve_since(args.since, config)
     until = _resolve_until(getattr(args, "until", None))
-    session = _get_session()
+    session = _get_session(quiet=args.quiet)
     _progress("Fetching notifications...", args.quiet)
     result = fetch_all_notifications(session)
     result = _filter_children(result, args.child)
@@ -361,7 +361,7 @@ def _messages(args):
     config = dotenv_values(CONFIG_FILE)
     since = _resolve_since(args.since, config)
     until = _resolve_until(getattr(args, "until", None))
-    session = _get_session()
+    session = _get_session(quiet=args.quiet)
     _progress("Fetching messages...", args.quiet)
     result = fetch_all_messages(session)
     result = _filter_children(result, args.child)
@@ -374,7 +374,7 @@ def _messages(args):
 
 
 def _calendar(args):
-    session = _get_session()
+    session = _get_session(quiet=args.quiet)
     if args.child:
         _resolve_and_switch_child(session, args.child)
     _progress("Fetching calendar event...", args.quiet)
@@ -383,7 +383,7 @@ def _calendar(args):
 
 
 def _attendance(args):
-    session = _get_session()
+    session = _get_session(quiet=args.quiet)
     if args.child:
         _resolve_and_switch_child(session, args.child)
     _progress("Fetching attendance detail...", args.quiet)
@@ -392,7 +392,7 @@ def _attendance(args):
 
 
 def _news(args):
-    session = _get_session()
+    session = _get_session(quiet=args.quiet)
     if args.child:
         _resolve_and_switch_child(session, args.child)
     _progress("Fetching news item...", args.quiet)
@@ -403,7 +403,7 @@ def _news(args):
 
 
 def _meeting(args):
-    session = _get_session()
+    session = _get_session(quiet=args.quiet)
     if args.child:
         _resolve_and_switch_child(session, args.child)
     _progress("Fetching meeting availabilities...", args.quiet)
@@ -412,7 +412,7 @@ def _meeting(args):
 
 
 def _attachment(args):
-    session = _get_session()
+    session = _get_session(quiet=args.quiet)
     if args.child:
         _resolve_and_switch_child(session, args.child)
     _progress("Fetching attachment...", args.quiet)
