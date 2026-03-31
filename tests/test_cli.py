@@ -880,6 +880,26 @@ class TestStatusJson:
         assert data["session"] is None
 
 
+class TestHelpExamples:
+    def test_main_help_has_examples(self, capsys):
+        from deformentor_cli.cli import main
+        import sys
+        with pytest.raises(SystemExit):
+            sys.argv = ["deformentor", "--help"]
+            main()
+        captured = capsys.readouterr()
+        assert "examples:" in captured.out.lower()
+
+    def test_notifications_help_has_examples(self, capsys):
+        from deformentor_cli.cli import main
+        import sys
+        with pytest.raises(SystemExit):
+            sys.argv = ["deformentor", "notifications", "--help"]
+            main()
+        captured = capsys.readouterr()
+        assert "examples:" in captured.out.lower()
+
+
 class TestEmitError:
     def test_writes_json_to_stderr(self, capsys):
         from deformentor_cli.errors import emit_error

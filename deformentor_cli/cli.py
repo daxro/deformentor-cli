@@ -213,7 +213,7 @@ class _LogoHelpAction(argparse.Action):
 
     def __call__(self, parser, namespace, values, option_string=None):
         print_logo()
-        parser.print_help(sys.stderr)
+        parser.print_help(sys.stdout)
         parser.exit()
 
 
@@ -221,6 +221,14 @@ def main():
     parser = argparse.ArgumentParser(
         prog="deformentor",
         description="Fetch school notifications and messages from InfoMentor via Freja eID+.",
+        epilog="""examples:
+  deformentor notifications                  Notifications from last 30 days
+  deformentor notifications --child Anna     Filter by child
+  deformentor notifications --type calendar  Filter by type
+  deformentor messages --since 2026-01-01    Messages since a date
+  deformentor news 12345                     News item detail
+  deformentor attachment "/path" > file.pdf  Download attachment""",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
         add_help=False,
     )
     parser.add_argument("-h", "--help", action=_LogoHelpAction, help="Show this message and exit")
@@ -233,15 +241,25 @@ def main():
 
     subparsers = parser.add_subparsers(dest="command", title="commands")
     subparsers.add_parser("setup", parents=[_quiet], help="Configure personnummer for login")
-    notif_parser = subparsers.add_parser("notifications", parents=[_quiet], help="Fetch notifications and messages for all children")
+    notif_parser = subparsers.add_parser("notifications", parents=[_quiet],
+        help="Fetch notifications and messages for all children",
+        epilog="""examples:
+  deformentor notifications --since all       All notifications, no date limit
+  deformentor notifications --child Anna      Filter by child name
+  deformentor notifications --type attendance  Filter by notification type""",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     notif_parser.add_argument("--child", help="Filter by child firstname")
     notif_parser.add_argument("--type", help="Filter by type (attendance, calendar, news, meeting, message)")
     notif_parser.add_argument("--since", help="Start date (YYYY-MM-DD, inclusive). Default: 30 days ago. 'all' for no limit.")
-    # notif_parser.add_argument("--until", help="End date (YYYY-MM-DD, inclusive). Default: no limit. 'all' to disable.")
-    msg_parser = subparsers.add_parser("messages", parents=[_quiet], help="Fetch messages for all children")
+    msg_parser = subparsers.add_parser("messages", parents=[_quiet],
+        help="Fetch messages for all children",
+        epilog="""examples:
+  deformentor messages --child Anna       Messages for one child
+  deformentor messages --since 2026-01-01  Messages since a date
+  deformentor messages --since all         All messages""",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     msg_parser.add_argument("--child", help="Filter by child firstname")
     msg_parser.add_argument("--since", help="Start date (YYYY-MM-DD, inclusive). Default: 30 days ago. 'all' for no limit.")
-    # msg_parser.add_argument("--until", help="End date (YYYY-MM-DD, inclusive). Default: no limit. 'all' to disable.")
     cal_parser = subparsers.add_parser("calendar", parents=[_quiet], help="Fetch a calendar event by ID")
     cal_parser.add_argument("id", help="Calendar event ID (from notifications output)")
     cal_parser.add_argument("--child", help="Switch to this child's context before fetching")
@@ -253,7 +271,11 @@ def main():
     news_parser.add_argument("--child", help="Switch to this child's context before fetching")
     meeting_parser = subparsers.add_parser("meeting", parents=[_quiet], help="Fetch meeting slot availabilities for a child")
     meeting_parser.add_argument("--child", help="Switch to this child's context before fetching")
-    att2_parser = subparsers.add_parser("attachment", parents=[_quiet], help="Fetch an attachment and write bytes to stdout")
+    att2_parser = subparsers.add_parser("attachment", parents=[_quiet],
+        help="Fetch an attachment and write bytes to stdout",
+        epilog="""examples:
+  deformentor attachment "/Resources/Resource/Download/123?api=IM2" > doc.pdf""",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     att2_parser.add_argument("url", help="Attachment URL path (from news detail attachments[].url)")
     att2_parser.add_argument("--child", help="Switch to this child's context before fetching")
     status_parser = subparsers.add_parser("status", help="Show configuration and session status")
