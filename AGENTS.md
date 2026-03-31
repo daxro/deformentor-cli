@@ -32,7 +32,6 @@ deformentor status --json                       # Machine-readable status check
 |------|-------------|
 | -q / --quiet | Suppress progress messages on stderr |
 | --no-input | Never prompt for input |
-| --no-color | Disable ANSI color codes |
 | --fields x,y | Filter output to specific fields |
 | --debug | Log HTTP requests to stderr |
 | --json | (status only) Output as JSON |

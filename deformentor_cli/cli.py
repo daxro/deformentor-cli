@@ -39,17 +39,14 @@ _RESET = "\033[0m"
 _SPLIT = 49
 
 
-def _should_use_color(no_color_flag=False):
+def _should_use_color():
     """Check whether ANSI color codes should be emitted to stderr.
 
     Returns False if any of:
-    - --no-color flag was passed
     - NO_COLOR env var is set (any value, per https://no-color.org)
     - TERM=dumb
     - stderr is not a TTY
     """
-    if no_color_flag:
-        return False
     if "NO_COLOR" in os.environ:
         return False
     if os.environ.get("TERM") == "dumb":
@@ -309,7 +306,7 @@ class _LogoHelpAction(argparse.Action):
         super().__init__(option_strings=option_strings, dest=dest, default=default, nargs=0, help=help)
 
     def __call__(self, parser, namespace, values, option_string=None):
-        use_color = _should_use_color(getattr(namespace, "no_color", False))
+        use_color = _should_use_color()
         print_logo(use_color)
         parser.print_help(sys.stdout)
         parser.exit()
@@ -332,7 +329,6 @@ def main():
     parser.add_argument("-h", "--help", action=_LogoHelpAction, help="Show this message and exit")
     parser.add_argument("--version", action="version", version=f"%(prog)s {_get_version()}")
     parser.add_argument("-q", "--quiet", action="store_true", help="Suppress progress messages on stderr")
-    parser.add_argument("--no-color", action="store_true", help="Disable colored output")
     parser.add_argument("--no-input", action="store_true", help="Never prompt for input (fail if input would be needed)")
     parser.add_argument("--debug", action="store_true", help="Log HTTP requests and responses to stderr")
     parser.add_argument("--fields", help="Comma-separated list of fields to include in output")
@@ -395,7 +391,7 @@ def main():
         _configure_debug()
 
     if args.command is None:
-        use_color = _should_use_color(getattr(args, "no_color", False))
+        use_color = _should_use_color()
         print_logo(use_color)
         parser.print_help(sys.stdout)
         sys.exit(1)
