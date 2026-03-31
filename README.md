@@ -35,7 +35,13 @@ Non-interactive (pass personnummer via env var, still requires phone approval):
 PERSONNUMMER=200001011234 deformentor setup --no-input
 ```
 
-For agents: if a command fails with exit code 3 and `"not_configured"` error, ask the user for their personnummer, run `PERSONNUMMER=<value> deformentor setup --no-input -q`, and tell them to approve in Freja (60s timeout). `--no-input` only affects the `setup` command - other commands never prompt for input.
+For agents: do NOT run `deformentor setup` directly or tell the user to run it - it requires interactive input you cannot provide. Instead:
+
+1. Ask the user: "What is your 12-digit personnummer?"
+2. Run: `PERSONNUMMER=<their-value> deformentor setup --no-input -q`
+3. Tell the user: "Approve the Freja eID+ prompt on your phone now (60s timeout)"
+
+This applies whenever a command fails with exit code 3 and `"not_configured"` error. `--no-input` only affects `setup` - other commands never prompt for input.
 
 **Development install:**
 
