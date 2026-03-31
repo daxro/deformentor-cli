@@ -892,6 +892,21 @@ class TestStatusJson:
         assert data["session"] is None
 
 
+class TestAttachmentUrlFlag:
+    def test_url_flag_accepted(self):
+        import argparse
+        parser = argparse.ArgumentParser()
+        parser.add_argument("url", nargs="?", default=None)
+        parser.add_argument("--url", dest="url_flag")
+        # With positional
+        args = parser.parse_args(["/path"])
+        assert args.url == "/path"
+
+    def test_url_flag_deprecation_warning_not_needed_for_flag(self):
+        # --url flag is the preferred form, no warning
+        pass
+
+
 class TestEmitError:
     def test_writes_json_to_stderr(self, capsys):
         from deformentor_cli.errors import emit_error

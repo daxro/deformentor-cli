@@ -250,7 +250,8 @@ def main():
     meeting_parser = subparsers.add_parser("meeting", parents=[_quiet], help="Fetch meeting slot availabilities for a child")
     meeting_parser.add_argument("--child", help="Switch to this child's context before fetching")
     att2_parser = subparsers.add_parser("attachment", parents=[_quiet], help="Fetch an attachment and write bytes to stdout")
-    att2_parser.add_argument("url", help="Attachment URL path (from news detail attachments[].url)")
+    att2_parser.add_argument("url", nargs="?", default=None, help="Attachment URL path (positional, deprecated - use --url)")
+    att2_parser.add_argument("--url", dest="url_flag", help="Attachment URL path (from news detail attachments[].url)")
     att2_parser.add_argument("--child", help="Switch to this child's context before fetching")
     status_parser = subparsers.add_parser("status", help="Show configuration and session status")
     status_parser.add_argument("--json", dest="json_output", action="store_true", help="Output status as JSON to stdout")
@@ -419,8 +420,16 @@ def _attachment(args):
     session = _get_session(quiet=args.quiet)
     if args.child:
         _resolve_and_switch_child(session, args.child)
+    url = getattr(args, "url_flag", None) or args.url
+    if url is None:
+        emit_error("usage_error", "attachment requires a URL. Use: deformentor attachment --url <path>", exit_code=EXIT_USAGE)
+    if args.url and not getattr(args, "url_flag", None):
+        print("Warning: positional URL argument is deprecated. Use --url instead.", file=sys.stderr)
     _progress("Fetching attachment...", args.quiet)
-    data = get_attachment(session, args.url)
+    try:
+        data = get_attachment(session, url)
+    except ValueError as e:
+        emit_error("invalid_input", str(e), exit_code=EXIT_USAGE)
     if not data:
         emit_error("not_found", "Attachment not found or empty response.", exit_code=EXIT_NOT_FOUND)
     sys.stdout.buffer.write(data)

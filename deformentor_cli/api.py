@@ -151,7 +151,16 @@ def get_attachment(session, url_path):
 
     url_path is the value from a news item's attachments[].url field,
     e.g. '/Resources/Resource/Download/2000001?api=IM2&ModuleType=NewsItem&ConnectionId=1000001'
+
+    Raises:
+        ValueError: If url_path contains path traversal or is not a relative path.
     """
+    if not url_path.startswith("/"):
+        raise ValueError(f"Attachment URL must start with '/'. Got: {url_path}")
+    path_part = url_path.split("?")[0]
+    if ".." in path_part.split("/"):
+        raise ValueError(f"Attachment URL contains path traversal: {url_path}")
+
     resp = session.get(
         f"{BASE_URL}{url_path}",
         headers=AJAX_HEADERS,

@@ -793,6 +793,26 @@ class TestGetAttachment:
             get_attachment(session, "/Resources/Resource/Download/bad")
 
 
+class TestAttachmentUrlValidation:
+    def test_rejects_path_traversal(self):
+        session = MagicMock()
+        with pytest.raises(ValueError, match="path traversal"):
+            get_attachment(session, "/../../../etc/passwd")
+
+    def test_rejects_absolute_url(self):
+        session = MagicMock()
+        with pytest.raises(ValueError, match="must start with"):
+            get_attachment(session, "https://evil.com/file")
+
+    def test_accepts_valid_resource_path(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.content = b"data"
+        session.get.return_value = resp
+        result = get_attachment(session, "/Resources/Resource/Download/123?api=IM2")
+        assert result == b"data"
+
+
 class TestGetAttendanceDetail:
     def test_posts_to_correct_url(self):
         session = MagicMock()
