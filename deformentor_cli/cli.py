@@ -222,6 +222,7 @@ def _write_config(content, quiet=False):
     """Write config content to CONFIG_FILE, creating directories as needed."""
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     CONFIG_FILE.write_text(content)
+    os.chmod(CONFIG_FILE, 0o600)
     _progress(f"Saved to {CONFIG_FILE}", quiet)
 
 
@@ -349,6 +350,7 @@ def main():
     notif_parser.add_argument("--child", help="Filter by child firstname")
     notif_parser.add_argument("--type", help="Filter by type (attendance, calendar, news, meeting, message)")
     notif_parser.add_argument("--since", help="Start date (YYYY-MM-DD, inclusive). Default: 30 days ago. 'all' for no limit.")
+    notif_parser.add_argument("--until", help="End date (YYYY-MM-DD, inclusive). 'all' for no limit.")
     msg_parser = subparsers.add_parser("messages", parents=[_quiet],
         help="Fetch messages for all children",
         epilog="""examples:
@@ -358,6 +360,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter)
     msg_parser.add_argument("--child", help="Filter by child firstname")
     msg_parser.add_argument("--since", help="Start date (YYYY-MM-DD, inclusive). Default: 30 days ago. 'all' for no limit.")
+    msg_parser.add_argument("--until", help="End date (YYYY-MM-DD, inclusive). 'all' for no limit.")
     msg_parser.add_argument("--all-pages", action="store_true", help="Fetch all message pages (default: page 1 only)")
     msg_parser.add_argument("--max-pages", type=int, default=50, help="Maximum pages to fetch with --all-pages (default: 50)")
     cal_parser = subparsers.add_parser("calendar", parents=[_quiet], help="Fetch a calendar event by ID")
@@ -415,6 +418,8 @@ def main():
             _attachment(args)
         elif args.command == "status":
             _status(args)
+    except KeyboardInterrupt:
+        sys.exit(130)
     except FrejaError as e:
         emit_error("auth_failed", f"Freja authentication failed: {e}", exit_code=EXIT_AUTH)
     except requests.HTTPError as e:
