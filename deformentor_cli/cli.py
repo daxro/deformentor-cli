@@ -18,7 +18,7 @@ except ImportError:
     _HAS_ARGCOMPLETE = False
 
 from deformentor_cli.errors import (
-    FrejaError, emit_error, EXIT_AUTH, EXIT_NETWORK, EXIT_NOT_FOUND, EXIT_USAGE,
+    FrejaError, emit_error, EXIT_AUTH, EXIT_ERROR, EXIT_NETWORK, EXIT_NOT_FOUND, EXIT_USAGE,
 )
 from deformentor_cli.api import (
     fetch_all_notifications, fetch_all_messages, get_attachment, get_attendance_detail,
@@ -392,6 +392,7 @@ def main():
     att2_parser.add_argument("--child", help="Switch to this child's context before fetching")
     status_parser = subparsers.add_parser("status", parents=[_global_flags], help="Show configuration and session status")
     status_parser.add_argument("--json", dest="json_output", action="store_true", help="Output status as JSON to stdout")
+    subparsers.add_parser("reset", parents=[_global_flags], help="Remove all config and session files")
 
     if _HAS_ARGCOMPLETE:
         argcomplete.autocomplete(parser)
@@ -425,6 +426,8 @@ def main():
             _attachment(args)
         elif args.command == "status":
             _status(args)
+        elif args.command == "reset":
+            _reset(args)
     except KeyboardInterrupt:
         sys.exit(130)
     except FrejaError as e:
@@ -575,3 +578,26 @@ def _attachment(args):
     if not data:
         emit_error("not_found", "Attachment not found or empty response.", exit_code=EXIT_NOT_FOUND)
     sys.stdout.buffer.write(data)
+
+
+def _reset(args):
+    """Remove all config and session files."""
+    deleted = []
+    failed = []
+    for path in [CONFIG_FILE, SESSION_FILE]:
+        if path.exists():
+            try:
+                path.unlink()
+                deleted.append(str(path))
+            except OSError as e:
+                failed.append(str(path))
+                if not args.quiet:
+                    print(f"Failed to delete {path}: {e}", file=sys.stderr)
+    if not args.quiet and deleted:
+        for p in deleted:
+            print(f"Deleted {p}", file=sys.stderr)
+    if not args.quiet and not deleted and not failed:
+        print("Nothing to reset — no config or session files found.", file=sys.stderr)
+    print(json.dumps({"reset": True, "deleted": deleted, "failed": failed}))
+    if failed:
+        sys.exit(EXIT_ERROR)

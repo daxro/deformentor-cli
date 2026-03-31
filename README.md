@@ -83,6 +83,7 @@ deformentor attachment --url "/path" --child Anna > f.pdf  # attachment for spec
 ```bash
 deformentor status                         # human-readable status
 deformentor status --json                  # machine-readable status
+deformentor reset                          # remove config and session files
 ```
 
 All data commands output JSON to stdout. Progress messages go to stderr (suppress with `-q`). Use `--fields date,type` to filter output fields, `--debug` to log HTTP traffic, `--version` to print the installed version. The `messages` subcommand supports `--max-pages` (int, default 50) to cap the number of pages fetched when using `--all-pages`.
@@ -193,6 +194,13 @@ Meeting availabilities (`deformentor meeting`):
 
 ```bash
 deformentor attachment --url "/Resources/Resource/Download/abc123" > doc.docx
+```
+
+## Uninstall
+
+```bash
+deformentor reset -q                       # remove config and session files
+pip uninstall deformentor-cli              # remove the binary
 ```
 
 ## Testing

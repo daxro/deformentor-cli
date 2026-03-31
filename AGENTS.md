@@ -27,6 +27,7 @@ deformentor news <id> -q                        # News item with attachments
 deformentor meeting -q                          # Meeting availabilities
 deformentor attachment --url <path> -q > f.pdf  # Download attachment
 deformentor status --json                       # Machine-readable status check
+deformentor reset -q                            # Remove all config and session
 ```
 
 ## Flags

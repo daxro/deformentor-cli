@@ -817,8 +817,9 @@ class TestQuietMode:
 
 
 class TestNonInteractiveSetup:
+    @patch("deformentor_cli.cli._print_status")
     @patch("deformentor_cli.cli.login")
-    def test_reads_env_var_when_no_tty(self, mock_login, monkeypatch, capsys, tmp_path):
+    def test_reads_env_var_when_no_tty(self, mock_login, mock_print_status, monkeypatch, capsys, tmp_path):
         from deformentor_cli.cli import _setup
         config_file = tmp_path / "config.env"
         monkeypatch.setattr("deformentor_cli.cli.CONFIG_FILE", config_file)
@@ -1149,3 +1150,93 @@ class TestGlobalFlagPosition:
         monkeypatch.setattr(_cli_mod, "_notifications", spy_notifications)
         main()
         assert getattr(captured_args["args"], attr) == value
+
+
+class TestResetCommand:
+    def test_reset_deletes_files(self, tmp_path, capsys):
+        from deformentor_cli.cli import _reset
+
+        config = tmp_path / "config.env"
+        session = tmp_path / "session.json"
+        config.write_text("PERSONNUMMER=200001011234\n")
+        session.write_text("{}")
+
+        args = MagicMock()
+        args.quiet = False
+
+        with patch("deformentor_cli.cli.CONFIG_FILE", config), \
+             patch("deformentor_cli.cli.SESSION_FILE", session):
+            _reset(args)
+
+        assert not config.exists()
+        assert not session.exists()
+        captured = capsys.readouterr()
+        data = json.loads(captured.out)
+        assert data["reset"] is True
+        assert len(data["deleted"]) == 2
+        assert data["failed"] == []
+        assert "Deleted" in captured.err
+
+    def test_reset_already_clean(self, tmp_path, capsys):
+        from deformentor_cli.cli import _reset
+
+        config = tmp_path / "config.env"
+        session = tmp_path / "session.json"
+
+        args = MagicMock()
+        args.quiet = False
+
+        with patch("deformentor_cli.cli.CONFIG_FILE", config), \
+             patch("deformentor_cli.cli.SESSION_FILE", session):
+            _reset(args)
+
+        captured = capsys.readouterr()
+        data = json.loads(captured.out)
+        assert data["reset"] is True
+        assert data["deleted"] == []
+        assert data["failed"] == []
+        assert "Nothing to reset" in captured.err
+
+    def test_reset_quiet_suppresses_stderr(self, tmp_path, capsys):
+        from deformentor_cli.cli import _reset
+
+        config = tmp_path / "config.env"
+        session = tmp_path / "session.json"
+        config.write_text("PERSONNUMMER=200001011234\n")
+
+        args = MagicMock()
+        args.quiet = True
+
+        with patch("deformentor_cli.cli.CONFIG_FILE", config), \
+             patch("deformentor_cli.cli.SESSION_FILE", session):
+            _reset(args)
+
+        captured = capsys.readouterr()
+        assert captured.err == ""
+        data = json.loads(captured.out)
+        assert data["reset"] is True
+
+    def test_reset_permission_error_exits_nonzero(self, tmp_path, capsys):
+        from deformentor_cli.cli import _reset
+
+        config = tmp_path / "config.env"
+        session = tmp_path / "session.json"
+        config.write_text("PERSONNUMMER=200001011234\n")
+
+        args = MagicMock()
+        args.quiet = False
+
+        def unlink_raises():
+            raise OSError("Permission denied")
+
+        with patch("deformentor_cli.cli.CONFIG_FILE", config), \
+             patch("deformentor_cli.cli.SESSION_FILE", session), \
+             patch.object(type(config), "unlink", side_effect=OSError("Permission denied")):
+            with pytest.raises(SystemExit) as exc:
+                _reset(args)
+            assert exc.value.code == 1
+
+        captured = capsys.readouterr()
+        data = json.loads(captured.out)
+        assert len(data["failed"]) == 1
+        assert "Failed to delete" in captured.err
