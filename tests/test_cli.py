@@ -335,6 +335,34 @@ class TestNotificationsCommand:
         captured = capsys.readouterr()
         assert "not a known type" in captured.err.lower()
 
+    @patch("deformentor_cli.cli._get_session")
+    @patch("deformentor_cli.cli.dotenv_values")
+    def test_warns_on_unknown_type_before_auth(self, mock_dotenv, mock_session, capsys):
+        from deformentor_cli.cli import _notifications
+        mock_dotenv.return_value = {}
+        mock_session.side_effect = SystemExit(3)
+        args = MagicMock()
+        args.child = None
+        args.type = "bogus"
+        args.since = None
+        args.until = None
+        with pytest.raises(SystemExit):
+            _notifications(args)
+        captured = capsys.readouterr()
+        assert "not a known type" in captured.err.lower()
+
+    @patch("deformentor_cli.cli.dotenv_values")
+    def test_exits_when_since_after_until(self, mock_dotenv):
+        from deformentor_cli.cli import _notifications
+        mock_dotenv.return_value = {}
+        args = MagicMock()
+        args.since = "2026-04-01"
+        args.until = "2026-03-01"
+        args.type = None
+        with pytest.raises(SystemExit) as exc_info:
+            _notifications(args)
+        assert exc_info.value.code == 2
+
 
 class TestMessagesCommand:
     @patch("deformentor_cli.cli.date")
@@ -432,6 +460,40 @@ class TestMessagesCommand:
 
         captured = capsys.readouterr()
         assert "no child matching" in captured.err.lower()
+
+    @patch("deformentor_cli.cli.dotenv_values")
+    def test_exits_when_since_after_until(self, mock_dotenv):
+        from deformentor_cli.cli import _messages
+        mock_dotenv.return_value = {}
+        args = MagicMock()
+        args.since = "2026-04-01"
+        args.until = "2026-03-01"
+        with pytest.raises(SystemExit) as exc_info:
+            _messages(args)
+        assert exc_info.value.code == 2
+
+    @patch("deformentor_cli.cli.date")
+    @patch("deformentor_cli.cli.fetch_all_messages")
+    @patch("deformentor_cli.cli.login")
+    @patch("deformentor_cli.cli.dotenv_values")
+    def test_warns_when_max_pages_without_all_pages(self, mock_dotenv, mock_login, mock_fetch, mock_date, capsys):
+        from deformentor_cli.cli import _messages
+        mock_date.today.return_value = date(2026, 3, 30)
+        mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
+        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_login.return_value = MagicMock()
+        mock_fetch.return_value = [
+            {"child": "Andersson, Astrid", "child_id": "1", "messages": []},
+        ]
+        args = MagicMock()
+        args.child = None
+        args.since = None
+        args.until = None
+        args.all_pages = False
+        args.max_pages = 10
+        _messages(args)
+        captured = capsys.readouterr()
+        assert "--max-pages has no effect without --all-pages" in captured.err
 
 
 class TestResolveAndSwitchChild:

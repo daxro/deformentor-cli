@@ -374,7 +374,7 @@ def main():
     msg_parser.add_argument("--since", help="Start date (YYYY-MM-DD, inclusive). Default: 30 days ago. 'all' for no limit.")
     msg_parser.add_argument("--until", help="End date (YYYY-MM-DD, inclusive). 'all' for no limit.")
     msg_parser.add_argument("--all-pages", action="store_true", help="Fetch all message pages (default: page 1 only)")
-    msg_parser.add_argument("--max-pages", type=int, default=50, help="Maximum pages to fetch with --all-pages (default: 50)")
+    msg_parser.add_argument("--max-pages", type=int, default=None, help="Maximum pages to fetch with --all-pages (default: 50)")
     cal_parser = subparsers.add_parser("calendar", parents=[_global_flags], help="Fetch a calendar event by ID")
     cal_parser.add_argument("id", help="Calendar event ID (from notifications output)")
     cal_parser.add_argument("--child", help="Switch to this child's context before fetching")
@@ -496,6 +496,10 @@ def _notifications(args):
     config = dotenv_values(CONFIG_FILE)
     since = _resolve_since(args.since, config)
     until = _resolve_until(getattr(args, "until", None))
+    if since and until and since > until:
+        emit_error("invalid_input", "--since cannot be after --until.", exit_code=EXIT_USAGE)
+    if args.type and args.type.lower() not in KNOWN_NOTIFICATION_TYPES:
+        print(f"Warning: '{args.type}' is not a known type. Known types: {', '.join(sorted(KNOWN_NOTIFICATION_TYPES))}", file=sys.stderr)
     session = _get_session(quiet=args.quiet)
     _progress("Fetching notifications...", args.quiet)
     result = fetch_all_notifications(session)
@@ -506,8 +510,6 @@ def _notifications(args):
         entry["notifications"] = _filter_items_by_type(entry["notifications"], args.type)
         entry["notifications"] = _filter_items_since(entry["notifications"], since)
         entry["notifications"] = _filter_items_until(entry["notifications"], until)
-    if args.type and args.type.lower() not in KNOWN_NOTIFICATION_TYPES:
-        print(f"Warning: '{args.type}' is not a known type. Known types: {', '.join(sorted(KNOWN_NOTIFICATION_TYPES))}", file=sys.stderr)
     _output_json(result, args)
 
 
@@ -515,10 +517,15 @@ def _messages(args):
     config = dotenv_values(CONFIG_FILE)
     since = _resolve_since(args.since, config)
     until = _resolve_until(getattr(args, "until", None))
+    if since and until and since > until:
+        emit_error("invalid_input", "--since cannot be after --until.", exit_code=EXIT_USAGE)
     session = _get_session(quiet=args.quiet)
     _progress("Fetching messages...", args.quiet)
     fetch_all_pages = getattr(args, "all_pages", False)
-    max_pages = getattr(args, "max_pages", 50)
+    raw_max_pages = getattr(args, "max_pages", None)
+    if raw_max_pages is not None and not fetch_all_pages:
+        print("Warning: --max-pages has no effect without --all-pages", file=sys.stderr)
+    max_pages = raw_max_pages if raw_max_pages is not None else 50
     result = fetch_all_messages(session, fetch_all_pages=fetch_all_pages, max_pages=max_pages)
     result = _filter_children(result, args.child)
     if args.child and not result:
