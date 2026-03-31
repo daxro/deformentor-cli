@@ -100,9 +100,9 @@ def _get_status():
                 try:
                     children = get_children(session)
                     status["children"] = [{"name": c["name"], "id": c["id"]} for c in children]
-                except Exception:
+                except (requests.RequestException, RuntimeError):
                     pass
-            except Exception:
+            except (requests.RequestException, RuntimeError):
                 status["session"] = "expired"
         else:
             status["session"] = "none"

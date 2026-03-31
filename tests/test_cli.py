@@ -561,7 +561,7 @@ class TestStatus:
         mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
         mock_new_session.return_value = MagicMock()
         mock_load.return_value = True
-        mock_verify.side_effect = Exception("not authenticated")
+        mock_verify.side_effect = RuntimeError("not authenticated")
         args = MagicMock()
         args.json_output = False
         _status(args)
@@ -938,6 +938,38 @@ class TestColorSafety:
         sub.add_parser("status")
         args = parser.parse_args(["--no-color", "status"])
         assert args.no_color is True
+
+
+class TestGetStatusExceptionHandling:
+    @patch("deformentor_cli.cli.get_children")
+    @patch("deformentor_cli.cli.verify_authenticated")
+    @patch("deformentor_cli.cli.new_session")
+    @patch("deformentor_cli.cli.load_session")
+    @patch("deformentor_cli.cli.dotenv_values")
+    def test_children_fetch_failure_returns_empty_children(self, mock_dotenv, mock_load, mock_new_session, mock_verify, mock_children):
+        import requests
+        from deformentor_cli.cli import _get_status
+        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_new_session.return_value = MagicMock()
+        mock_load.return_value = True
+        mock_children.side_effect = requests.ConnectionError("network error")
+        status = _get_status()
+        assert status["session"] == "valid"
+        assert status["children"] == []
+
+    @patch("deformentor_cli.cli.get_children")
+    @patch("deformentor_cli.cli.verify_authenticated")
+    @patch("deformentor_cli.cli.new_session")
+    @patch("deformentor_cli.cli.load_session")
+    @patch("deformentor_cli.cli.dotenv_values")
+    def test_unexpected_error_propagates(self, mock_dotenv, mock_load, mock_new_session, mock_verify, mock_children):
+        from deformentor_cli.cli import _get_status
+        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_new_session.return_value = MagicMock()
+        mock_load.return_value = True
+        mock_children.side_effect = KeyError("unexpected")
+        with pytest.raises(KeyError):
+            _get_status()
 
 
 class TestArgparseErrorFormat:
