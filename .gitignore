@@ -11,3 +11,5 @@ _temp_inbox/
 .playwright-mcp/
 uv.lock
 .claude/
+CLAUDE.md
+CLAUDE.local.md
