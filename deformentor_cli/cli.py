@@ -383,4 +383,6 @@ def _attachment(args):
         _resolve_and_switch_child(session, args.child)
     _progress("Fetching attachment...", args.quiet)
     data = get_attachment(session, args.url)
+    if not data:
+        emit_error("not_found", "Attachment not found or empty response.", exit_code=EXIT_NOT_FOUND)
     sys.stdout.buffer.write(data)

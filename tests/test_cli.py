@@ -731,7 +731,7 @@ class TestAttachmentCommand:
         from deformentor_cli.cli import _attachment
         mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
         mock_login.return_value = MagicMock()
-        mock_fetch.return_value = b""
+        mock_fetch.return_value = b"%PDF-1.4 test"
         args = MagicMock()
         args.url = "/Resources/Resource/Download/123?api=IM2"
         args.child = "Astrid"
@@ -741,6 +741,21 @@ class TestAttachmentCommand:
         with mpatch("sys.stdout", fake_stdout):
             _attachment(args)
         mock_switch.assert_called_once_with(mock_login.return_value, "Astrid")
+
+    @patch("deformentor_cli.cli.get_attachment")
+    @patch("deformentor_cli.cli.login")
+    @patch("deformentor_cli.cli.dotenv_values")
+    def test_exits_when_attachment_is_empty(self, mock_dotenv, mock_login, mock_fetch):
+        from deformentor_cli.cli import _attachment
+        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_login.return_value = MagicMock()
+        mock_fetch.return_value = b""
+        args = MagicMock()
+        args.url = "/Resources/Resource/Download/123?api=IM2"
+        args.child = None
+        with pytest.raises(SystemExit) as exc_info:
+            _attachment(args)
+        assert exc_info.value.code == 4
 
 
 class TestQuietMode:
