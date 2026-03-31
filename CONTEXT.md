@@ -34,5 +34,6 @@ Authentication requires physical approval on the user's phone via the Freja app.
 - All errors are structured JSON on stderr: `{"error": "code", "message": "text"}`
 - Exit codes: 0=success, 1=error, 2=usage, 3=auth, 4=not_found, 5=network
 - Progress messages go to stderr, suppressed with -q/--quiet
-- Config: `~/.config/deformentor/config.env`
-- Session cache: `~/.local/state/deformentor/session.json`
+- Config and session paths are platform-dependent (via `platformdirs`). Run `deformentor status --json` for actual paths.
+  - Linux: `~/.config/deformentor/config.env`, `~/.local/state/deformentor/session.json`
+  - macOS: `~/Library/Application Support/deformentor/config.env`, `~/Library/Application Support/deformentor/session.json`

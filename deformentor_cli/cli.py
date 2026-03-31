@@ -92,6 +92,8 @@ def _get_status():
         "personnummer": _mask_personnummer(personnummer) if personnummer else None,
         "session": None,
         "children": [],
+        "config_path": str(CONFIG_FILE),
+        "session_path": str(SESSION_FILE),
     }
 
     if personnummer:
@@ -114,21 +116,23 @@ def _get_status():
 
 
 def _print_status(status):
-    """Print human-readable status to stderr."""
+    """Print human-readable status to stdout."""
     if not status["configured"]:
-        emit_error("not_configured", "Not configured. Run: deformentor setup", exit_code=EXIT_AUTH)
+        print("Not configured. Run: deformentor setup")
+        return
 
-    print(f"Personnummer: {status['personnummer']}", file=sys.stderr)
-    print(f"Session: {status['session']}", file=sys.stderr)
+    print(f"Personnummer: {status['personnummer']}")
+    print(f"Config: {status['config_path']}")
+    print(f"Session: {status['session']}")
     if status["session"] == "expired":
-        print("  Run any command to re-authenticate.", file=sys.stderr)
+        print("  Run any command to re-authenticate.")
     if status["session"] == "none":
-        emit_error("no_session", "No saved session.", exit_code=EXIT_AUTH)
+        print("  Run any command to start a session.")
     if status["children"]:
-        print("Children:", file=sys.stderr)
+        print("Children:")
         for child in status["children"]:
             name = child["name"].split(", ")[-1] if ", " in child["name"] else child["name"]
-            print(f"  - {name} (id: {child['id']})", file=sys.stderr)
+            print(f"  - {name} (id: {child['id']})")
 
 
 def _status(args):
@@ -405,7 +409,7 @@ def main():
         use_color = _should_use_color()
         print_logo(use_color)
         parser.print_help(sys.stdout)
-        sys.exit(1)
+        sys.exit(0)
 
     try:
         if args.command == "setup":

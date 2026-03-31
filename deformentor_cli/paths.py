@@ -1,4 +1,4 @@
-"""XDG-compliant paths for config and state files."""
+"""Platform-native paths for config and state files (via platformdirs)."""
 
 from pathlib import Path
 

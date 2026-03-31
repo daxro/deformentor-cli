@@ -547,10 +547,10 @@ class TestStatus:
         args.json_output = False
         _status(args)
         captured = capsys.readouterr()
-        assert "0001****1234" in captured.err
-        assert "valid" in captured.err.lower()
-        assert "Astrid" in captured.err
-        assert "Nils" in captured.err
+        assert "0001****1234" in captured.out
+        assert "valid" in captured.out.lower()
+        assert "Astrid" in captured.out
+        assert "Nils" in captured.out
 
     @patch("deformentor_cli.cli.dotenv_values")
     def test_shows_not_configured(self, mock_dotenv, capsys):
@@ -558,11 +558,10 @@ class TestStatus:
         mock_dotenv.return_value = {}
         args = MagicMock()
         args.json_output = False
-        with pytest.raises(SystemExit) as exc_info:
-            _status(args)
-        assert exc_info.value.code == 3
-        err_data = json.loads(capsys.readouterr().err)
-        assert err_data["error"] == "not_configured"
+        _status(args)
+        captured = capsys.readouterr()
+        assert "Not configured" in captured.out
+        assert "deformentor setup" in captured.out
 
     @patch("deformentor_cli.cli.verify_authenticated")
     @patch("deformentor_cli.cli.new_session")
@@ -578,8 +577,8 @@ class TestStatus:
         args.json_output = False
         _status(args)
         captured = capsys.readouterr()
-        assert "expired" in captured.err.lower()
-        assert "re-authenticate" in captured.err.lower()
+        assert "expired" in captured.out.lower()
+        assert "re-authenticate" in captured.out.lower()
 
     @patch("deformentor_cli.cli.new_session")
     @patch("deformentor_cli.cli.load_session")
@@ -591,12 +590,10 @@ class TestStatus:
         mock_load.return_value = False
         args = MagicMock()
         args.json_output = False
-        with pytest.raises(SystemExit) as exc_info:
-            _status(args)
-        assert exc_info.value.code == 3
-        err_lines = [l for l in capsys.readouterr().err.splitlines() if l.startswith("{")]
-        err_data = json.loads(err_lines[-1])
-        assert err_data["error"] == "no_session"
+        _status(args)
+        captured = capsys.readouterr()
+        assert "none" in captured.out.lower()
+        assert "start a session" in captured.out.lower()
 
 
 class TestCalendarCommand:
@@ -1074,7 +1071,7 @@ class TestHelpOutput:
         with pytest.raises(SystemExit) as exc_info:
             _sys.argv = ["deformentor"]
             main()
-        assert exc_info.value.code == 1
+        assert exc_info.value.code == 0
         captured = capsys.readouterr()
         assert "usage:" in captured.out.lower() or "commands:" in captured.out.lower()
 

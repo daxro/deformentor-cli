@@ -9,47 +9,63 @@ CLI that fetches school notifications and messages from InfoMentor via Stockholm
 
 BankID is not supported since it does not support remote login.
 
-## Install
+## Quick Start
 
-Global install (available everywhere):
+**Interactive (humans):**
 
-```bash
-uv tool install git+https://github.com/daxro/deformentor-cli.git
-```
+1. Install:
+   ```bash
+   uv tool install git+https://github.com/daxro/deformentor-cli.git
+   ```
+2. Set up your personnummer and authenticate:
+   ```bash
+   deformentor setup
+   ```
+   Enter your 12-digit personnummer when prompted, then approve the login in Freja on your phone.
+3. Fetch data:
+   ```bash
+   deformentor notifications
+   ```
 
-For development:
+**Non-interactive (agents/CI):**
 
-```bash
-git clone https://github.com/daxro/deformentor-cli.git
-cd deformentor-cli
-uv sync
-uv run deformentor --version
-```
+1. Install:
+   ```bash
+   uv tool install git+https://github.com/daxro/deformentor-cli.git
+   ```
+2. Set up and authenticate (a human must approve the Freja prompt on their phone):
+   ```bash
+   PERSONNUMMER=200001011234 deformentor setup --no-input
+   ```
+3. Fetch data:
+   ```bash
+   deformentor notifications
+   ```
 
-## Setup
+**Development install:**
 
-Interactive:
-
-```bash
-deformentor setup
-```
-
-Prompts for your 12-digit personnummer, then authenticates via Freja eID+ (approve on your phone).
-
-Non-interactive (for agents/CI):
-
-```bash
-PERSONNUMMER=200001011234 deformentor setup --no-input
-```
+1. Clone and install dependencies:
+   ```bash
+   git clone https://github.com/daxro/deformentor-cli.git
+   cd deformentor-cli
+   uv sync
+   ```
+2. Set up (interactive or non-interactive):
+   ```bash
+   uv run deformentor setup
+   # or: PERSONNUMMER=200001011234 uv run deformentor setup --no-input
+   ```
 
 ## Configuration
 
-Config and state are stored in XDG-standard directories:
+Config and state are stored in platform-standard directories (via [platformdirs](https://pypi.org/project/platformdirs/)):
 
-| File | Path | Contents |
-|------|------|----------|
-| Config | `~/.config/deformentor/config.env` | `PERSONNUMMER`, `DEFAULT_SINCE_DAYS` |
-| Session | `~/.local/state/deformentor/session.json` | Cached auth cookies |
+| File | Linux | macOS |
+|------|-------|-------|
+| Config | `~/.config/deformentor/config.env` | `~/Library/Application Support/deformentor/config.env` |
+| Session | `~/.local/state/deformentor/session.json` | `~/Library/Application Support/deformentor/session.json` |
+
+Run `deformentor status --json` to see the actual paths on your system.
 
 Optional config variables in `config.env`:
 
@@ -200,7 +216,7 @@ deformentor attachment --url "/Resources/Resource/Download/abc123" > doc.docx
 
 ```bash
 deformentor reset -q                       # remove config and session files
-pip uninstall deformentor-cli              # remove the binary
+uv tool uninstall deformentor-cli          # remove the binary
 ```
 
 ## Testing
