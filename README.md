@@ -1,4 +1,4 @@
-# Deformentor
+# Deformentor CLI
 
 An unofficial CLI for InfoMentor, using Freja eID+ for login.
 
