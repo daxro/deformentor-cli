@@ -201,6 +201,17 @@ def _progress(message, quiet=False):
         print(message, file=sys.stderr)
 
 
+def _configure_debug():
+    """Enable debug logging of HTTP requests to stderr."""
+    import logging
+    logging.basicConfig(
+        format="%(levelname)s %(name)s: %(message)s",
+        level=logging.DEBUG,
+        stream=sys.stderr,
+    )
+    logging.getLogger("urllib3").setLevel(logging.DEBUG)
+
+
 class _LogoHelpAction(argparse.Action):
     def __init__(self, option_strings, dest=argparse.SUPPRESS, default=argparse.SUPPRESS, help=None):
         super().__init__(option_strings=option_strings, dest=dest, default=default, nargs=0, help=help)
@@ -221,6 +232,7 @@ def main():
     parser.add_argument("--version", action="version", version="%(prog)s 0.1.0")
     parser.add_argument("-q", "--quiet", action="store_true", help="Suppress progress messages on stderr")
     parser.add_argument("--no-input", action="store_true", help="Never prompt for input (fail if input would be needed)")
+    parser.add_argument("--debug", action="store_true", help="Log HTTP requests and responses to stderr")
 
     # Shared parent parser so -q is accepted after the subcommand name too
     _quiet = argparse.ArgumentParser(add_help=False)
@@ -258,6 +270,9 @@ def main():
     status_parser.add_argument("--json", dest="json_output", action="store_true", help="Output status as JSON to stdout")
 
     args = parser.parse_args()
+
+    if getattr(args, "debug", False):
+        _configure_debug()
 
     if args.command is None:
         print_logo()

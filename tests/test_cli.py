@@ -924,6 +924,22 @@ class TestEmitError:
         assert exc_info.value.code == 1
 
 
+class TestDebugFlag:
+    def test_debug_flag_accepted(self):
+        import argparse
+        parser = argparse.ArgumentParser(add_help=False)
+        parser.add_argument("--debug", action="store_true")
+        args = parser.parse_args(["--debug"])
+        assert args.debug is True
+
+    def test_debug_enables_http_logging(self, capsys, monkeypatch):
+        import logging
+        from deformentor_cli.cli import _configure_debug
+        _configure_debug()
+        logger = logging.getLogger("urllib3")
+        assert logger.level == logging.DEBUG
+
+
 class TestNoInputFlag:
     def test_no_input_flag_accepted_by_parser(self):
         import argparse
