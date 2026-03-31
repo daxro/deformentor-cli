@@ -16,6 +16,9 @@ dependencies = [
 deformentor = "deformentor_cli.cli:main"
 dfm = "deformentor_cli.cli:main"
 
+[project.optional-dependencies]
+completion = ["argcomplete>=3.0"]
+
 [dependency-groups]
 dev = [
     "pytest>=9.0.2",

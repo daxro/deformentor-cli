@@ -10,6 +10,12 @@ from datetime import date, timedelta
 import requests
 from dotenv import dotenv_values
 
+try:
+    import argcomplete
+    _HAS_ARGCOMPLETE = True
+except ImportError:
+    _HAS_ARGCOMPLETE = False
+
 from deformentor_cli.errors import (
     FrejaError, emit_error, EXIT_AUTH, EXIT_NETWORK, EXIT_NOT_FOUND, EXIT_USAGE,
 )
@@ -253,6 +259,8 @@ def main():
     status_parser = subparsers.add_parser("status", help="Show configuration and session status")
     status_parser.add_argument("--json", dest="json_output", action="store_true", help="Output status as JSON to stdout")
 
+    if _HAS_ARGCOMPLETE:
+        argcomplete.autocomplete(parser)
     args = parser.parse_args()
 
     if args.command is None:
