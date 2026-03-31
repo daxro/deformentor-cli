@@ -43,15 +43,6 @@ For agents: do NOT run `deformentor setup` directly or tell the user to run it -
 
 This applies whenever a command fails with exit code 3 and `"not_configured"` error. `--no-input` only affects `setup` - other commands never prompt for input.
 
-**Development install:**
-
-```bash
-git clone https://github.com/daxro/deformentor-cli.git
-cd deformentor-cli
-uv sync
-uv run deformentor setup
-```
-
 ## Usage
 
 ```bash
@@ -227,6 +218,17 @@ Meeting availabilities (`deformentor meeting`):
 ```bash
 deformentor reset -q                       # remove config and session files
 uv tool uninstall deformentor-cli          # remove the binary
+```
+
+## Development
+
+For contributing or running from source:
+
+```bash
+git clone https://github.com/daxro/deformentor-cli.git
+cd deformentor-cli
+uv sync
+uv run deformentor setup
 ```
 
 ## Testing
