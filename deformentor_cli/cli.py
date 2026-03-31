@@ -566,7 +566,10 @@ def _news(args):
     _progress("Fetching news item...", args.quiet)
     result = get_news_detail(session, args.id)
     if result is None:
-        emit_error("not_found", f"News item {args.id} not found.", exit_code=EXIT_NOT_FOUND)
+        if args.child:
+            emit_error("not_found", f"News item {args.id} not found under child '{args.child}'.", exit_code=EXIT_NOT_FOUND)
+        else:
+            emit_error("not_found", f"News item {args.id} not found. If this item belongs to a specific child, retry with --child <name>.", exit_code=EXIT_NOT_FOUND)
     _output_json(result, args)
 
 

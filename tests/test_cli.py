@@ -722,6 +722,31 @@ class TestNewsCommand:
         with pytest.raises(SystemExit) as exc_info:
             _news(args)
         assert exc_info.value.code == 4
+        captured = capsys.readouterr()
+        err = json.loads(captured.err)
+        assert err["error"] == "not_found"
+        assert "--child" in err["message"]
+
+    @patch("deformentor_cli.cli._resolve_and_switch_child")
+    @patch("deformentor_cli.cli.get_news_detail")
+    @patch("deformentor_cli.cli.login")
+    @patch("deformentor_cli.cli.dotenv_values")
+    def test_exits_with_child_context_message_when_child_provided(self, mock_dotenv, mock_login, mock_fetch, mock_switch, capsys):
+        from deformentor_cli.cli import _news
+        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_login.return_value = MagicMock()
+        mock_fetch.return_value = None
+        args = MagicMock()
+        args.id = "9999"
+        args.child = "felix"
+        with pytest.raises(SystemExit) as exc_info:
+            _news(args)
+        assert exc_info.value.code == 4
+        captured = capsys.readouterr()
+        err = json.loads(captured.err)
+        assert err["error"] == "not_found"
+        assert "felix" in err["message"]
+        assert "--child" not in err["message"]
 
     @patch("deformentor_cli.cli._resolve_and_switch_child")
     @patch("deformentor_cli.cli.get_news_detail")
