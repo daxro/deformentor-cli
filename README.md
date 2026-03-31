@@ -1,8 +1,10 @@
 # Deformentor
 
-An unofficial CLI for InfoMentor, using Freja eID+ for login. Outputs JSON to stdout.
+An unofficial CLI for InfoMentor, using Freja eID+ for login.
 
-AI agents and automated scripts: see [AGENTS.md](AGENTS.md).
+For humans - stop navigating the InfoMentor web UI. Deformentor gives you `--help` on every command, structured JSON output, and date filtering.
+
+For AI agents - every response is JSON to stdout, errors are JSON to stderr with distinct exit codes. Pass `-q` to suppress progress messages.
 
 ## Prerequisites
 
@@ -11,56 +13,38 @@ AI agents and automated scripts: see [AGENTS.md](AGENTS.md).
 
 BankID is not supported since it does not support remote login.
 
-## Quick Start
+## Install
 
-**Interactive (humans):**
+```bash
+uv tool install git+https://github.com/daxro/deformentor-cli.git
+```
 
-1. Install:
-   ```bash
-   uv tool install git+https://github.com/daxro/deformentor-cli.git
-   ```
-2. Set up your personnummer and authenticate:
-   ```bash
-   deformentor setup
-   ```
-   Enter your 12-digit personnummer when prompted, then approve the login in Freja on your phone.
-3. Fetch data:
-   ```bash
-   deformentor notifications
-   ```
+The short alias `dfm` is also available (e.g., `dfm notifications`).
 
-**Non-interactive (agents/CI):** See [AGENTS.md](AGENTS.md).
+## Setup
+
+```bash
+deformentor setup
+```
+
+Enter your 12-digit personnummer when prompted, then approve the login in Freja on your phone. The session is cached for reuse.
+
+Non-interactive (pass personnummer via env var, still requires phone approval):
+
+```bash
+PERSONNUMMER=200001011234 deformentor setup --no-input
+```
+
+For agents: if a command fails with exit code 3 and `"not_configured"` error, ask the user for their personnummer, run `PERSONNUMMER=<value> deformentor setup --no-input -q`, and tell them to approve in Freja (60s timeout). `--no-input` only affects the `setup` command - other commands never prompt for input.
 
 **Development install:**
 
-1. Clone and install dependencies:
-   ```bash
-   git clone https://github.com/daxro/deformentor-cli.git
-   cd deformentor-cli
-   uv sync
-   ```
-2. Set up (interactive or non-interactive):
-   ```bash
-   uv run deformentor setup
-   # or: PERSONNUMMER=200001011234 uv run deformentor setup --no-input
-   ```
-
-## Configuration
-
-Config and state are stored in platform-standard directories (via [platformdirs](https://pypi.org/project/platformdirs/)):
-
-| File | Linux | macOS |
-|------|-------|-------|
-| Config | `~/.config/deformentor/config.env` | `~/Library/Application Support/deformentor/config.env` |
-| Session | `~/.local/state/deformentor/session.json` | `~/Library/Application Support/deformentor/session.json` |
-
-Run `deformentor status --json` to see the actual paths on your system.
-
-Optional config variables in `config.env`:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DEFAULT_SINCE_DAYS` | `30` | Rolling window for `--since` default |
+```bash
+git clone https://github.com/daxro/deformentor-cli.git
+cd deformentor-cli
+uv sync
+uv run deformentor setup
+```
 
 ## Usage
 
@@ -80,20 +64,55 @@ deformentor news <id> --child Anna         # news item for specific child
 deformentor meeting                        # meeting slot availabilities
 deformentor meeting --child Anna           # meeting slots for specific child
 deformentor attachment --url "/path" > f.pdf  # download attachment to file
-deformentor attachment --url "/path" --child Anna > f.pdf  # attachment for specific child
+deformentor attachment --url "/path" --child Anna > f.pdf
 ```
 
-`--child` works on all item commands: `calendar`, `attendance`, `news`, `meeting`, and `attachment`.
+`--child` works on all item commands: `calendar`, `attendance`, `news`, `meeting`, and `attachment`. Matching is case-insensitive substring against the full child name.
 
 ```bash
 deformentor status                         # human-readable status
 deformentor status --json                  # machine-readable status
-deformentor reset                          # remove config and session files (outputs JSON summary)
+deformentor reset                          # remove config and session files
 ```
 
-All data commands output JSON to stdout. Progress messages go to stderr (suppress with `-q`). Use `--fields date,type` to filter output fields, `--debug` to log HTTP traffic, `--version` to print the installed version. The `messages` subcommand supports `--max-pages` (int, default 50) to cap the number of pages fetched when using `--all-pages`.
+All data commands output JSON to stdout. Progress messages go to stderr (suppress with `-q`). Use `--fields date,type` to filter output fields, `--debug` to log HTTP traffic, `--version` to print the installed version.
 
-The short alias `dfm` is also available (e.g., `dfm notifications`).
+The `attachment` command writes raw bytes to stdout. Redirect to a file - it exits with code 2 if output goes to a terminal.
+
+For agents: pipe through `jq` for field extraction, e.g. `deformentor notifications -q | jq '.[0].notifications[].type.name'`.
+
+## Flags
+
+| Flag | Description |
+|------|-------------|
+| -q / --quiet | Suppress progress messages on stderr |
+| --no-input | Skip interactive prompts (setup only) |
+| --fields x,y | Filter output to specific fields |
+| --debug | Log HTTP requests to stderr |
+| --since DATE | Start date (YYYY-MM-DD or 'all'). Default: 30 days ago |
+| --until DATE | End date (YYYY-MM-DD or 'all'). No default upper bound |
+| --all-pages | Fetch all pages (messages only) |
+| --max-pages N | Max pages to fetch with --all-pages (default 50, messages only) |
+| --child NAME | Filter or switch by child name (case-insensitive substring) |
+| --type TYPE | Filter notification type (attendance, calendar, news, meeting, message) |
+| --json | Output as JSON (status only) |
+
+## Configuration
+
+Config and state are stored in platform-standard directories (via [platformdirs](https://pypi.org/project/platformdirs/)):
+
+| File | Linux | macOS |
+|------|-------|-------|
+| Config | `~/.config/deformentor/config.env` | `~/Library/Application Support/deformentor/config.env` |
+| Session | `~/.local/state/deformentor/session.json` | `~/Library/Application Support/deformentor/session.json` |
+
+Run `deformentor status --json` to see the actual paths on your system.
+
+Optional config variables in `config.env`:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DEFAULT_SINCE_DAYS` | `30` | Rolling window for `--since` default |
 
 ## Exit Codes
 
@@ -111,6 +130,8 @@ Errors are emitted as JSON to stderr:
 ```json
 {"error": "auth_failed", "message": "Freja authentication failed: Rejected"}
 ```
+
+For agents: sessions expire and the CLI re-authenticates automatically, which requires phone approval. If a command hangs or returns exit code 3, tell the user to check their phone for a Freja prompt. `-q` suppresses the "approve in Freja" stderr message, so assume re-auth is in progress. Setup only needs re-running if the error contains `"not_configured"` - expired sessions are handled automatically.
 
 ## Output
 
@@ -193,12 +214,6 @@ Meeting availabilities (`deformentor meeting`):
     }
   ]
 }
-```
-
-`deformentor attachment` writes raw bytes to stdout. Redirect to a file:
-
-```bash
-deformentor attachment --url "/Resources/Resource/Download/abc123" > doc.docx
 ```
 
 ## Uninstall
