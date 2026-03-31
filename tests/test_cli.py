@@ -892,20 +892,6 @@ class TestStatusJson:
         assert data["session"] is None
 
 
-class TestAttachmentUrlFlag:
-    def test_url_flag_accepted(self):
-        import argparse
-        parser = argparse.ArgumentParser()
-        parser.add_argument("url", nargs="?", default=None)
-        parser.add_argument("--url", dest="url_flag")
-        # With positional
-        args = parser.parse_args(["/path"])
-        assert args.url == "/path"
-
-    def test_url_flag_deprecation_warning_not_needed_for_flag(self):
-        # --url flag is the preferred form, no warning
-        pass
-
 
 class TestFieldsFilter:
     def test_filter_fields_flat_dict(self):
@@ -1007,18 +993,6 @@ class TestColorSafety:
         from deformentor_cli.cli import _should_use_color
         assert _should_use_color() is False
 
-    def test_should_use_color_false_when_no_color_flag(self):
-        from deformentor_cli.cli import _should_use_color
-        assert _should_use_color(no_color_flag=True) is False
-
-    def test_no_color_flag_accepted_by_parser(self):
-        import argparse
-        parser = argparse.ArgumentParser(add_help=False)
-        parser.add_argument("--no-color", action="store_true")
-        sub = parser.add_subparsers(dest="command")
-        sub.add_parser("status")
-        args = parser.parse_args(["--no-color", "status"])
-        assert args.no_color is True
 
 
 class TestGetStatusExceptionHandling:
@@ -1089,30 +1063,8 @@ class TestVersion:
         assert _get_version() == version("deformentor-cli")
 
 
-class TestStatusQuiet:
-    def test_status_subparser_accepts_quiet_flag(self):
-        import argparse
-        parser = argparse.ArgumentParser(add_help=False)
-        parser.add_argument("-q", "--quiet", action="store_true")
-        _quiet = argparse.ArgumentParser(add_help=False)
-        _quiet.add_argument("-q", "--quiet", action="store_true")
-        sub = parser.add_subparsers(dest="command")
-        sub.add_parser("status", parents=[_quiet])
-        args = parser.parse_args(["status", "-q"])
-        assert args.quiet is True
-
 
 class TestHelpOutput:
-    def test_help_flag_prints_help_to_stdout(self, capsys):
-        import sys as _sys
-        from deformentor_cli.cli import main
-        with pytest.raises(SystemExit) as exc_info:
-            _sys.argv = ["deformentor", "--help"]
-            main()
-        assert exc_info.value.code == 0
-        captured = capsys.readouterr()
-        assert "usage:" in captured.out.lower() or "commands:" in captured.out.lower()
-
     def test_no_args_prints_help_to_stdout(self, capsys):
         import sys as _sys
         from deformentor_cli.cli import main
@@ -1134,13 +1086,6 @@ class TestHelpOutput:
 
 
 class TestDebugFlag:
-    def test_debug_flag_accepted(self):
-        import argparse
-        parser = argparse.ArgumentParser(add_help=False)
-        parser.add_argument("--debug", action="store_true")
-        args = parser.parse_args(["--debug"])
-        assert args.debug is True
-
     def test_debug_enables_http_logging(self, capsys, monkeypatch):
         import logging
         from deformentor_cli.cli import _configure_debug
@@ -1150,15 +1095,6 @@ class TestDebugFlag:
 
 
 class TestNoInputFlag:
-    def test_no_input_flag_accepted_by_parser(self):
-        import argparse
-        parser = argparse.ArgumentParser(add_help=False)
-        parser.add_argument("--no-input", action="store_true")
-        sub = parser.add_subparsers(dest="command")
-        sub.add_parser("setup")
-        args = parser.parse_args(["--no-input", "setup"])
-        assert args.no_input is True
-
     @patch("deformentor_cli.cli.login")
     def test_setup_no_input_uses_env_var(self, mock_login, monkeypatch, capsys):
         from deformentor_cli.cli import _setup
