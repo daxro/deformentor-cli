@@ -339,17 +339,16 @@ def main():
     parser.add_argument("--fields", help="Comma-separated list of fields to include in output")
 
     # Parent parser so global flags are accepted after the subcommand name too.
-    # SUPPRESS prevents subparser defaults from clobbering root-parsed values,
-    # and keeps these flags out of per-subcommand --help output.
+    # SUPPRESS on defaults prevents subparser defaults from clobbering root-parsed values.
     _global_flags = argparse.ArgumentParser(add_help=False)
     _global_flags.add_argument("-q", "--quiet", action="store_true",
-                               default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+                               default=argparse.SUPPRESS, help="Suppress progress messages on stderr")
     _global_flags.add_argument("--no-input", action="store_true",
-                               default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+                               default=argparse.SUPPRESS, help="Never prompt for input (fail if input would be needed)")
     _global_flags.add_argument("--debug", action="store_true",
-                               default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+                               default=argparse.SUPPRESS, help="Log HTTP requests and responses to stderr")
     _global_flags.add_argument("--fields",
-                               default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+                               default=argparse.SUPPRESS, help="Comma-separated list of fields to include in output")
 
     subparsers = parser.add_subparsers(dest="command", title="commands", parser_class=_DeformentorParser)
     subparsers.add_parser("setup", parents=[_global_flags], help="Configure personnummer for login")
@@ -569,9 +568,9 @@ def _meeting(args):
 
 
 def _attachment(args):
+    session = _get_session(quiet=args.quiet)
     if sys.stdout.isatty():
         emit_error("usage_error", "Binary output. Redirect to a file: deformentor attachment --url <path> > file.pdf", exit_code=EXIT_USAGE)
-    session = _get_session(quiet=args.quiet)
     if args.child:
         _resolve_and_switch_child(session, args.child)
     _progress("Fetching attachment...", args.quiet)

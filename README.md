@@ -1,6 +1,6 @@
 # Deformentor
 
-CLI that fetches school notifications and messages from InfoMentor via Stockholms stad's Freja eID+. Outputs JSON to stdout.
+An unofficial CLI for InfoMentor, using Freja eID+ for login. Outputs JSON to stdout.
 
 ## Prerequisites
 
@@ -99,7 +99,7 @@ deformentor attachment --url "/path" --child Anna > f.pdf  # attachment for spec
 ```bash
 deformentor status                         # human-readable status
 deformentor status --json                  # machine-readable status
-deformentor reset                          # remove config and session files
+deformentor reset                          # remove config and session files (outputs JSON summary)
 ```
 
 All data commands output JSON to stdout. Progress messages go to stderr (suppress with `-q`). Use `--fields date,type` to filter output fields, `--debug` to log HTTP traffic, `--version` to print the installed version. The `messages` subcommand supports `--max-pages` (int, default 50) to cap the number of pages fetched when using `--all-pages`.
