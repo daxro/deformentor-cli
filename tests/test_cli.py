@@ -1108,3 +1108,44 @@ class TestNoInputFlag:
             mock_status.return_value = {"configured": True, "personnummer": "0001****1234", "session": "valid", "children": []}
             _setup(quiet=True, no_input=True)
         mock_login.assert_called_once()
+
+
+class TestGlobalFlagPosition:
+    """Global flags (--debug, --no-input, etc.) must work both before and after the subcommand."""
+
+    @pytest.mark.parametrize("flag,attr,value", [
+        ("--debug", "debug", True),
+        ("--no-input", "no_input", True),
+    ])
+    @pytest.mark.parametrize("position", ["before", "after"])
+    @patch("deformentor_cli.cli.fetch_all_notifications")
+    @patch("deformentor_cli.cli.login")
+    @patch("deformentor_cli.cli.dotenv_values")
+    def test_flag_propagated(self, mock_dotenv, mock_login, mock_fetch,
+                             position, flag, attr, value, monkeypatch):
+        import sys as _sys
+        from deformentor_cli.cli import main
+
+        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_login.return_value = MagicMock()
+        mock_fetch.return_value = []
+
+        if position == "before":
+            argv = ["deformentor", flag, "notifications"]
+        else:
+            argv = ["deformentor", "notifications", flag]
+        monkeypatch.setattr(_sys, "argv", argv)
+
+        captured_args = {}
+
+        original_notifications = None
+        import deformentor_cli.cli as _cli_mod
+        original_notifications = _cli_mod._notifications
+
+        def spy_notifications(args):
+            captured_args["args"] = args
+            return original_notifications(args)
+
+        monkeypatch.setattr(_cli_mod, "_notifications", spy_notifications)
+        main()
+        assert getattr(captured_args["args"], attr) == value

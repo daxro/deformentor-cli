@@ -334,13 +334,22 @@ def main():
     parser.add_argument("--debug", action="store_true", help="Log HTTP requests and responses to stderr")
     parser.add_argument("--fields", help="Comma-separated list of fields to include in output")
 
-    # Shared parent parser so -q is accepted after the subcommand name too
-    _quiet = argparse.ArgumentParser(add_help=False)
-    _quiet.add_argument("-q", "--quiet", action="store_true", help="Suppress progress messages on stderr")
+    # Parent parser so global flags are accepted after the subcommand name too.
+    # SUPPRESS prevents subparser defaults from clobbering root-parsed values,
+    # and keeps these flags out of per-subcommand --help output.
+    _global_flags = argparse.ArgumentParser(add_help=False)
+    _global_flags.add_argument("-q", "--quiet", action="store_true",
+                               default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    _global_flags.add_argument("--no-input", action="store_true",
+                               default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    _global_flags.add_argument("--debug", action="store_true",
+                               default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    _global_flags.add_argument("--fields",
+                               default=argparse.SUPPRESS, help=argparse.SUPPRESS)
 
     subparsers = parser.add_subparsers(dest="command", title="commands", parser_class=_DeformentorParser)
-    subparsers.add_parser("setup", parents=[_quiet], help="Configure personnummer for login")
-    notif_parser = subparsers.add_parser("notifications", parents=[_quiet],
+    subparsers.add_parser("setup", parents=[_global_flags], help="Configure personnummer for login")
+    notif_parser = subparsers.add_parser("notifications", parents=[_global_flags],
         help="Fetch notifications and messages for all children",
         epilog="""examples:
   deformentor notifications --since all       All notifications, no date limit
@@ -351,7 +360,7 @@ def main():
     notif_parser.add_argument("--type", help="Filter by type (attendance, calendar, news, meeting, message)")
     notif_parser.add_argument("--since", help="Start date (YYYY-MM-DD, inclusive). Default: 30 days ago. 'all' for no limit.")
     notif_parser.add_argument("--until", help="End date (YYYY-MM-DD, inclusive). 'all' for no limit.")
-    msg_parser = subparsers.add_parser("messages", parents=[_quiet],
+    msg_parser = subparsers.add_parser("messages", parents=[_global_flags],
         help="Fetch messages for all children",
         epilog="""examples:
   deformentor messages --child Anna       Messages for one child
@@ -363,25 +372,25 @@ def main():
     msg_parser.add_argument("--until", help="End date (YYYY-MM-DD, inclusive). 'all' for no limit.")
     msg_parser.add_argument("--all-pages", action="store_true", help="Fetch all message pages (default: page 1 only)")
     msg_parser.add_argument("--max-pages", type=int, default=50, help="Maximum pages to fetch with --all-pages (default: 50)")
-    cal_parser = subparsers.add_parser("calendar", parents=[_quiet], help="Fetch a calendar event by ID")
+    cal_parser = subparsers.add_parser("calendar", parents=[_global_flags], help="Fetch a calendar event by ID")
     cal_parser.add_argument("id", help="Calendar event ID (from notifications output)")
     cal_parser.add_argument("--child", help="Switch to this child's context before fetching")
-    att_parser = subparsers.add_parser("attendance", parents=[_quiet], help="Fetch an attendance / leave request by ID")
+    att_parser = subparsers.add_parser("attendance", parents=[_global_flags], help="Fetch an attendance / leave request by ID")
     att_parser.add_argument("id", help="Attendance/leave request ID (from notifications output)")
     att_parser.add_argument("--child", help="Switch to this child's context before fetching")
-    news_parser = subparsers.add_parser("news", parents=[_quiet], help="Fetch a news item by ID")
+    news_parser = subparsers.add_parser("news", parents=[_global_flags], help="Fetch a news item by ID")
     news_parser.add_argument("id", help="News item ID (from notifications output)")
     news_parser.add_argument("--child", help="Switch to this child's context before fetching")
-    meeting_parser = subparsers.add_parser("meeting", parents=[_quiet], help="Fetch meeting slot availabilities for a child")
+    meeting_parser = subparsers.add_parser("meeting", parents=[_global_flags], help="Fetch meeting slot availabilities for a child")
     meeting_parser.add_argument("--child", help="Switch to this child's context before fetching")
-    att2_parser = subparsers.add_parser("attachment", parents=[_quiet],
+    att2_parser = subparsers.add_parser("attachment", parents=[_global_flags],
         help="Fetch an attachment and write bytes to stdout",
         epilog="""examples:
   deformentor attachment --url "/Resources/Resource/Download/123?api=IM2" > doc.pdf""",
         formatter_class=argparse.RawDescriptionHelpFormatter)
     att2_parser.add_argument("--url", required=True, help="Attachment URL path (from news detail attachments[].url)")
     att2_parser.add_argument("--child", help="Switch to this child's context before fetching")
-    status_parser = subparsers.add_parser("status", parents=[_quiet], help="Show configuration and session status")
+    status_parser = subparsers.add_parser("status", parents=[_global_flags], help="Show configuration and session status")
     status_parser.add_argument("--json", dest="json_output", action="store_true", help="Output status as JSON to stdout")
 
     if _HAS_ARGCOMPLETE:
