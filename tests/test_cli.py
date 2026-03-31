@@ -940,6 +940,13 @@ class TestColorSafety:
         assert args.no_color is True
 
 
+class TestVersion:
+    def test_version_matches_pyproject(self):
+        from importlib.metadata import version
+        from deformentor_cli.cli import _get_version
+        assert _get_version() == version("deformentor-cli")
+
+
 class TestStatusQuiet:
     def test_status_subparser_accepts_quiet_flag(self):
         import argparse

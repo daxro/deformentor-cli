@@ -6,6 +6,7 @@ import os
 import re
 import sys
 from datetime import date, timedelta
+from importlib.metadata import version as _pkg_version, PackageNotFoundError
 
 import requests
 from dotenv import dotenv_values
@@ -227,6 +228,14 @@ def _progress(message, quiet=False):
         print(message, file=sys.stderr)
 
 
+def _get_version():
+    """Get version from installed package metadata, with fallback."""
+    try:
+        return _pkg_version("deformentor-cli")
+    except PackageNotFoundError:
+        return "0.1.0-dev"
+
+
 class _LogoHelpAction(argparse.Action):
     def __init__(self, option_strings, dest=argparse.SUPPRESS, default=argparse.SUPPRESS, help=None):
         super().__init__(option_strings=option_strings, dest=dest, default=default, nargs=0, help=help)
@@ -245,7 +254,7 @@ def main():
         add_help=False,
     )
     parser.add_argument("-h", "--help", action=_LogoHelpAction, help="Show this message and exit")
-    parser.add_argument("--version", action="version", version="%(prog)s 0.1.0")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {_get_version()}")
     parser.add_argument("-q", "--quiet", action="store_true", help="Suppress progress messages on stderr")
     parser.add_argument("--no-color", action="store_true", help="Disable colored output")
 
