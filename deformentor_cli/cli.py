@@ -32,11 +32,37 @@ _RESET = "\033[0m"
 _SPLIT = 49
 
 
-def print_logo():
+def _should_use_color(no_color_flag=False):
+    """Check whether ANSI color codes should be emitted to stderr.
+
+    Returns False if any of:
+    - --no-color flag was passed
+    - NO_COLOR env var is set (any value, per https://no-color.org)
+    - TERM=dumb
+    - stderr is not a TTY
+    """
+    if no_color_flag:
+        return False
+    if "NO_COLOR" in os.environ:
+        return False
+    if os.environ.get("TERM") == "dumb":
+        return False
+    if not sys.stderr.isatty():
+        return False
+    return True
+
+
+def print_logo(use_color=None):
+    """Print the ASCII logo to stderr. Respects color settings."""
+    if use_color is None:
+        use_color = _should_use_color()
     for line in _LOGO_LINES:
         main_part = line[:_SPLIT]
         cli_part = line[_SPLIT + 2:] if len(line) > _SPLIT + 2 else ""
-        print(f"{_CYAN}{main_part}{_RESET}  {_BOLD_WHITE}{cli_part}{_RESET}", file=sys.stderr)
+        if use_color:
+            print(f"{_CYAN}{main_part}{_RESET}  {_BOLD_WHITE}{cli_part}{_RESET}", file=sys.stderr)
+        else:
+            print(f"{main_part}  {cli_part}", file=sys.stderr)
 from deformentor_cli.session import login, new_session, load_session, verify_authenticated
 
 KNOWN_NOTIFICATION_TYPES = {"attendance", "calendar", "news", "meeting", "message"}
@@ -206,7 +232,8 @@ class _LogoHelpAction(argparse.Action):
         super().__init__(option_strings=option_strings, dest=dest, default=default, nargs=0, help=help)
 
     def __call__(self, parser, namespace, values, option_string=None):
-        print_logo()
+        use_color = _should_use_color(getattr(namespace, "no_color", False))
+        print_logo(use_color)
         parser.print_help(sys.stderr)
         parser.exit()
 
@@ -220,6 +247,7 @@ def main():
     parser.add_argument("-h", "--help", action=_LogoHelpAction, help="Show this message and exit")
     parser.add_argument("--version", action="version", version="%(prog)s 0.1.0")
     parser.add_argument("-q", "--quiet", action="store_true", help="Suppress progress messages on stderr")
+    parser.add_argument("--no-color", action="store_true", help="Disable colored output")
 
     # Shared parent parser so -q is accepted after the subcommand name too
     _quiet = argparse.ArgumentParser(add_help=False)
@@ -256,7 +284,8 @@ def main():
     args = parser.parse_args()
 
     if args.command is None:
-        print_logo()
+        use_color = _should_use_color(getattr(args, "no_color", False))
+        print_logo(use_color)
         parser.print_help(sys.stderr)
         sys.exit(1)
 
@@ -291,7 +320,7 @@ def main():
 
 def _setup(quiet=False):
     if sys.stdin.isatty():
-        print_logo()
+        print_logo(_should_use_color())
     if not sys.stdin.isatty():
         personnummer = os.environ.get("PERSONNUMMER")
         if not personnummer:

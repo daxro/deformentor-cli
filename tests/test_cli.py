@@ -895,3 +895,46 @@ class TestEmitError:
         with pytest.raises(SystemExit) as exc_info:
             emit_error("unknown", "Something broke")
         assert exc_info.value.code == 1
+
+
+class TestColorSafety:
+    def test_print_logo_no_ansi_when_no_color_env(self, capsys, monkeypatch):
+        monkeypatch.setenv("NO_COLOR", "1")
+        from deformentor_cli import cli as _cli
+        import importlib
+        importlib.reload(_cli)
+        _cli.print_logo()
+        captured = capsys.readouterr()
+        assert "\033[" not in captured.err
+
+    def test_print_logo_no_ansi_when_term_dumb(self, capsys, monkeypatch):
+        monkeypatch.setenv("TERM", "dumb")
+        monkeypatch.delenv("NO_COLOR", raising=False)
+        from deformentor_cli.cli import print_logo
+        print_logo()
+        captured = capsys.readouterr()
+        assert "\033[" not in captured.err
+
+    def test_should_use_color_false_when_no_color_set(self, monkeypatch):
+        monkeypatch.setenv("NO_COLOR", "")
+        from deformentor_cli.cli import _should_use_color
+        assert _should_use_color() is False
+
+    def test_should_use_color_false_when_term_dumb(self, monkeypatch):
+        monkeypatch.delenv("NO_COLOR", raising=False)
+        monkeypatch.setenv("TERM", "dumb")
+        from deformentor_cli.cli import _should_use_color
+        assert _should_use_color() is False
+
+    def test_should_use_color_false_when_no_color_flag(self):
+        from deformentor_cli.cli import _should_use_color
+        assert _should_use_color(no_color_flag=True) is False
+
+    def test_no_color_flag_accepted_by_parser(self):
+        import argparse
+        parser = argparse.ArgumentParser(add_help=False)
+        parser.add_argument("--no-color", action="store_true")
+        sub = parser.add_subparsers(dest="command")
+        sub.add_parser("status")
+        args = parser.parse_args(["--no-color", "status"])
+        assert args.no_color is True
