@@ -29,20 +29,7 @@ BankID is not supported since it does not support remote login.
    deformentor notifications
    ```
 
-**Non-interactive (agents/CI):**
-
-1. Install:
-   ```bash
-   uv tool install git+https://github.com/daxro/deformentor-cli.git
-   ```
-2. Set up and authenticate (a human must approve the Freja prompt on their phone):
-   ```bash
-   PERSONNUMMER=200001011234 deformentor setup --no-input
-   ```
-3. Fetch data:
-   ```bash
-   deformentor notifications
-   ```
+**Non-interactive (agents/CI):** See [AGENTS.md](AGENTS.md).
 
 **Development install:**
 

@@ -338,20 +338,25 @@ def main():
     parser.add_argument("--debug", action="store_true", help="Log HTTP requests and responses to stderr")
     parser.add_argument("--fields", help="Comma-separated list of fields to include in output")
 
-    # Parent parser so global flags are accepted after the subcommand name too.
+    # Parent parsers so global flags are accepted after the subcommand name too.
     # SUPPRESS on defaults prevents subparser defaults from clobbering root-parsed values.
-    _global_flags = argparse.ArgumentParser(add_help=False)
-    _global_flags.add_argument("-q", "--quiet", action="store_true",
-                               default=argparse.SUPPRESS, help="Suppress progress messages on stderr")
-    _global_flags.add_argument("--no-input", action="store_true",
-                               default=argparse.SUPPRESS, help="Never prompt for input (fail if input would be needed)")
-    _global_flags.add_argument("--debug", action="store_true",
-                               default=argparse.SUPPRESS, help="Log HTTP requests and responses to stderr")
+    # _base_flags: flags shared by every subcommand.
+    # _global_flags: _base_flags + --fields (only for commands that produce field-filterable output).
+    _base_flags = argparse.ArgumentParser(add_help=False)
+    _base_flags.add_argument("-q", "--quiet", action="store_true",
+                             default=argparse.SUPPRESS, help="Suppress progress messages on stderr")
+    _base_flags.add_argument("--no-input", action="store_true",
+                             default=argparse.SUPPRESS, help="Never prompt for input (fail if input would be needed)")
+    _base_flags.add_argument("--debug", action="store_true",
+                             default=argparse.SUPPRESS, help="Log HTTP requests and responses to stderr")
+    _global_flags = argparse.ArgumentParser(add_help=False, parents=[_base_flags])
     _global_flags.add_argument("--fields",
                                default=argparse.SUPPRESS, help="Comma-separated list of fields to include in output")
 
     subparsers = parser.add_subparsers(dest="command", title="commands", parser_class=_DeformentorParser)
-    subparsers.add_parser("setup", parents=[_global_flags], help="Configure personnummer for login")
+    subparsers.add_parser("setup", parents=[_base_flags], help="Configure personnummer for login",
+        epilog="In non-interactive mode (--no-input), set the PERSONNUMMER env var.",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     notif_parser = subparsers.add_parser("notifications", parents=[_global_flags],
         help="Fetch notifications and messages for all children",
         epilog="""examples:
@@ -359,7 +364,7 @@ def main():
   deformentor notifications --child Anna      Filter by child name
   deformentor notifications --type attendance  Filter by notification type""",
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    notif_parser.add_argument("--child", help="Filter by child firstname")
+    notif_parser.add_argument("--child", help="Filter by child name (case-insensitive substring match)")
     notif_parser.add_argument("--type", help="Filter by type (attendance, calendar, news, meeting, message)")
     notif_parser.add_argument("--since", help="Start date (YYYY-MM-DD, inclusive). Default: 30 days ago. 'all' for no limit.")
     notif_parser.add_argument("--until", help="End date (YYYY-MM-DD, inclusive). 'all' for no limit.")
@@ -370,7 +375,7 @@ def main():
   deformentor messages --since 2026-01-01  Messages since a date
   deformentor messages --since all         All messages""",
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    msg_parser.add_argument("--child", help="Filter by child firstname")
+    msg_parser.add_argument("--child", help="Filter by child name (case-insensitive substring match)")
     msg_parser.add_argument("--since", help="Start date (YYYY-MM-DD, inclusive). Default: 30 days ago. 'all' for no limit.")
     msg_parser.add_argument("--until", help="End date (YYYY-MM-DD, inclusive). 'all' for no limit.")
     msg_parser.add_argument("--all-pages", action="store_true", help="Fetch all message pages (default: page 1 only)")
@@ -395,7 +400,7 @@ def main():
     att2_parser.add_argument("--child", help="Switch to this child's context before fetching")
     status_parser = subparsers.add_parser("status", parents=[_global_flags], help="Show configuration and session status")
     status_parser.add_argument("--json", dest="json_output", action="store_true", help="Output status as JSON to stdout")
-    subparsers.add_parser("reset", parents=[_global_flags], help="Remove all config and session files")
+    subparsers.add_parser("reset", parents=[_base_flags], help="Remove all config and session files")
 
     if _HAS_ARGCOMPLETE:
         argcomplete.autocomplete(parser)
