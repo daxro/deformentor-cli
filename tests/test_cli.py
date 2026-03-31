@@ -880,6 +880,40 @@ class TestStatusJson:
         assert data["session"] is None
 
 
+class TestFieldsFilter:
+    def test_filter_fields_flat_dict(self):
+        from deformentor_cli.cli import _filter_fields
+        data = {"id": "123", "title": "Hello", "content": "<p>Long</p>", "extra": "data"}
+        result = _filter_fields(data, ["id", "title"])
+        assert result == {"id": "123", "title": "Hello"}
+
+    def test_filter_fields_list_of_dicts(self):
+        from deformentor_cli.cli import _filter_fields
+        data = [
+            {"id": "1", "name": "Alice", "extra": "x"},
+            {"id": "2", "name": "Bob", "extra": "y"},
+        ]
+        result = _filter_fields(data, ["id", "name"])
+        assert result == [{"id": "1", "name": "Alice"}, {"id": "2", "name": "Bob"}]
+
+    def test_filter_fields_nested_structure(self):
+        from deformentor_cli.cli import _filter_fields
+        data = [
+            {"child": "A", "notifications": [{"date": "2026-03-30", "type": {"name": "news", "id": "1"}}]}
+        ]
+        result = _filter_fields(data, ["child", "notifications.date", "notifications.type.name"])
+        assert result[0]["child"] == "A"
+        assert result[0]["notifications"][0]["date"] == "2026-03-30"
+        assert result[0]["notifications"][0]["type"]["name"] == "news"
+        assert "id" not in result[0]["notifications"][0]["type"]
+
+    def test_filter_fields_none_returns_original(self):
+        from deformentor_cli.cli import _filter_fields
+        data = {"id": "123", "title": "Hello"}
+        result = _filter_fields(data, None)
+        assert result == data
+
+
 class TestHelpExamples:
     def test_main_help_has_examples(self, capsys):
         from deformentor_cli.cli import main

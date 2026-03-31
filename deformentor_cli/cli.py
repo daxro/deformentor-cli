@@ -110,7 +110,7 @@ def _print_status(status):
 def _status(args):
     status = _get_status()
     if args.json_output:
-        print(json.dumps(status, ensure_ascii=False, indent=2))
+        _output_json(status, args)
         return
     _print_status(status)
 
@@ -207,6 +207,48 @@ def _progress(message, quiet=False):
         print(message, file=sys.stderr)
 
 
+def _filter_fields(data, fields):
+    """Filter JSON output to only include specified fields.
+
+    Supports dot-notation for nested fields (e.g., 'notifications.date').
+    Returns data unchanged if fields is None.
+    """
+    if fields is None:
+        return data
+    if isinstance(data, list):
+        return [_filter_fields(item, fields) for item in data]
+    if not isinstance(data, dict):
+        return data
+
+    result = {}
+    top_level = set()
+    nested = {}
+    for field in fields:
+        parts = field.split(".", 1)
+        if len(parts) == 1:
+            top_level.add(parts[0])
+        else:
+            nested.setdefault(parts[0], []).append(parts[1])
+
+    for key in top_level:
+        if key in data:
+            result[key] = data[key]
+
+    for key, sub_fields in nested.items():
+        if key in data:
+            result[key] = _filter_fields(data[key], sub_fields)
+
+    return result
+
+
+def _output_json(data, args):
+    """Print data as JSON to stdout, applying --fields filter if set."""
+    fields = getattr(args, "fields", None)
+    field_list = [f.strip() for f in fields.split(",")] if isinstance(fields, str) and fields else None
+    data = _filter_fields(data, field_list)
+    print(json.dumps(data, ensure_ascii=False, indent=2))
+
+
 class _LogoHelpAction(argparse.Action):
     def __init__(self, option_strings, dest=argparse.SUPPRESS, default=argparse.SUPPRESS, help=None):
         super().__init__(option_strings=option_strings, dest=dest, default=default, nargs=0, help=help)
@@ -234,6 +276,7 @@ def main():
     parser.add_argument("-h", "--help", action=_LogoHelpAction, help="Show this message and exit")
     parser.add_argument("--version", action="version", version="%(prog)s 0.1.0")
     parser.add_argument("-q", "--quiet", action="store_true", help="Suppress progress messages on stderr")
+    parser.add_argument("--fields", help="Comma-separated list of fields to include in output")
 
     # Shared parent parser so -q is accepted after the subcommand name too
     _quiet = argparse.ArgumentParser(add_help=False)
@@ -384,7 +427,7 @@ def _notifications(args):
         entry["notifications"] = _filter_items_until(entry["notifications"], until)
     if args.type and args.type.lower() not in KNOWN_NOTIFICATION_TYPES:
         print(f"Warning: '{args.type}' is not a known type. Known types: {', '.join(sorted(KNOWN_NOTIFICATION_TYPES))}", file=sys.stderr)
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    _output_json(result, args)
 
 
 def _messages(args):
@@ -400,7 +443,7 @@ def _messages(args):
     for entry in result:
         entry["messages"] = _filter_items_since(entry["messages"], since)
         entry["messages"] = _filter_items_until(entry["messages"], until)
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    _output_json(result, args)
 
 
 def _calendar(args):
@@ -409,7 +452,7 @@ def _calendar(args):
         _resolve_and_switch_child(session, args.child)
     _progress("Fetching calendar event...", args.quiet)
     result = get_calendar_event(session, args.id)
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    _output_json(result, args)
 
 
 def _attendance(args):
@@ -418,7 +461,7 @@ def _attendance(args):
         _resolve_and_switch_child(session, args.child)
     _progress("Fetching attendance detail...", args.quiet)
     result = get_attendance_detail(session, args.id)
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    _output_json(result, args)
 
 
 def _news(args):
@@ -429,7 +472,7 @@ def _news(args):
     result = get_news_detail(session, args.id)
     if result is None:
         emit_error("not_found", f"News item {args.id} not found.", exit_code=EXIT_NOT_FOUND)
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    _output_json(result, args)
 
 
 def _meeting(args):
@@ -438,7 +481,7 @@ def _meeting(args):
         _resolve_and_switch_child(session, args.child)
     _progress("Fetching meeting availabilities...", args.quiet)
     result = get_meeting_availabilities(session)
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    _output_json(result, args)
 
 
 def _attachment(args):
