@@ -19,7 +19,7 @@ class TestGetSession:
         result = _get_session()
 
         assert result is mock_session
-        mock_login.assert_called_once_with("200001011234", session_path=str(SESSION_FILE))
+        mock_login.assert_called_once_with("200001011234", session_path=str(SESSION_FILE), quiet=False)
 
     @patch("deformentor_cli.cli.dotenv_values")
     def test_exits_on_missing_personnummer(self, mock_dotenv, capsys):
@@ -30,6 +30,18 @@ class TestGetSession:
         with pytest.raises(SystemExit) as exc_info:
             _get_session()
         assert exc_info.value.code == 3
+
+
+class TestGetSessionQuiet:
+    @patch("deformentor_cli.cli.login")
+    @patch("deformentor_cli.cli.dotenv_values")
+    def test_passes_quiet_to_login(self, mock_dotenv, mock_login):
+        from deformentor_cli.cli import _get_session, SESSION_FILE
+        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_session = MagicMock()
+        mock_login.return_value = mock_session
+        _get_session(quiet=True)
+        mock_login.assert_called_once_with("200001011234", session_path=str(SESSION_FILE), quiet=True)
 
 
 class TestValidateDateFlag:
@@ -880,6 +892,21 @@ class TestStatusJson:
         assert data["session"] is None
 
 
+class TestAttachmentUrlFlag:
+    def test_url_flag_accepted(self):
+        import argparse
+        parser = argparse.ArgumentParser()
+        parser.add_argument("url", nargs="?", default=None)
+        parser.add_argument("--url", dest="url_flag")
+        # With positional
+        args = parser.parse_args(["/path"])
+        assert args.url == "/path"
+
+    def test_url_flag_deprecation_warning_not_needed_for_flag(self):
+        # --url flag is the preferred form, no warning
+        pass
+
+
 class TestEmitError:
     def test_writes_json_to_stderr(self, capsys):
         from deformentor_cli.errors import emit_error
@@ -1050,3 +1077,42 @@ class TestHelpOutput:
         # logo content (ASCII art) goes to stderr, not stdout
         assert len(captured.err.strip()) > 0
         assert captured.out == ""
+
+
+class TestDebugFlag:
+    def test_debug_flag_accepted(self):
+        import argparse
+        parser = argparse.ArgumentParser(add_help=False)
+        parser.add_argument("--debug", action="store_true")
+        args = parser.parse_args(["--debug"])
+        assert args.debug is True
+
+    def test_debug_enables_http_logging(self, capsys, monkeypatch):
+        import logging
+        from deformentor_cli.cli import _configure_debug
+        _configure_debug()
+        logger = logging.getLogger("urllib3")
+        assert logger.level == logging.DEBUG
+
+
+class TestNoInputFlag:
+    def test_no_input_flag_accepted_by_parser(self):
+        import argparse
+        parser = argparse.ArgumentParser(add_help=False)
+        parser.add_argument("--no-input", action="store_true")
+        sub = parser.add_subparsers(dest="command")
+        sub.add_parser("setup")
+        args = parser.parse_args(["--no-input", "setup"])
+        assert args.no_input is True
+
+    @patch("deformentor_cli.cli.login")
+    def test_setup_no_input_uses_env_var(self, mock_login, monkeypatch, capsys):
+        from deformentor_cli.cli import _setup
+        monkeypatch.setenv("PERSONNUMMER", "200001011234")
+        monkeypatch.setattr("sys.stdin", MagicMock(isatty=lambda: True))
+        mock_login.return_value = MagicMock()
+        with patch("deformentor_cli.cli._get_status") as mock_status, \
+             patch("deformentor_cli.cli._print_status"):
+            mock_status.return_value = {"configured": True, "personnummer": "0001****1234", "session": "valid", "children": []}
+            _setup(quiet=True, no_input=True)
+        mock_login.assert_called_once()

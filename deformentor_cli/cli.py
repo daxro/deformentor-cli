@@ -245,6 +245,17 @@ class _DeformentorParser(argparse.ArgumentParser):
         self.exit(EXIT_USAGE)
 
 
+def _configure_debug():
+    """Enable debug logging of HTTP requests to stderr."""
+    import logging
+    logging.basicConfig(
+        format="%(levelname)s %(name)s: %(message)s",
+        level=logging.DEBUG,
+        stream=sys.stderr,
+    )
+    logging.getLogger("urllib3").setLevel(logging.DEBUG)
+
+
 class _LogoHelpAction(argparse.Action):
     def __init__(self, option_strings, dest=argparse.SUPPRESS, default=argparse.SUPPRESS, help=None):
         super().__init__(option_strings=option_strings, dest=dest, default=default, nargs=0, help=help)
@@ -266,6 +277,8 @@ def main():
     parser.add_argument("--version", action="version", version=f"%(prog)s {_get_version()}")
     parser.add_argument("-q", "--quiet", action="store_true", help="Suppress progress messages on stderr")
     parser.add_argument("--no-color", action="store_true", help="Disable colored output")
+    parser.add_argument("--no-input", action="store_true", help="Never prompt for input (fail if input would be needed)")
+    parser.add_argument("--debug", action="store_true", help="Log HTTP requests and responses to stderr")
 
     # Shared parent parser so -q is accepted after the subcommand name too
     _quiet = argparse.ArgumentParser(add_help=False)
@@ -282,6 +295,8 @@ def main():
     msg_parser.add_argument("--child", help="Filter by child firstname")
     msg_parser.add_argument("--since", help="Start date (YYYY-MM-DD, inclusive). Default: 30 days ago. 'all' for no limit.")
     # msg_parser.add_argument("--until", help="End date (YYYY-MM-DD, inclusive). Default: no limit. 'all' to disable.")
+    msg_parser.add_argument("--all-pages", action="store_true", help="Fetch all message pages (default: page 1 only)")
+    msg_parser.add_argument("--max-pages", type=int, default=50, help="Maximum pages to fetch with --all-pages (default: 50)")
     cal_parser = subparsers.add_parser("calendar", parents=[_quiet], help="Fetch a calendar event by ID")
     cal_parser.add_argument("id", help="Calendar event ID (from notifications output)")
     cal_parser.add_argument("--child", help="Switch to this child's context before fetching")
@@ -294,12 +309,16 @@ def main():
     meeting_parser = subparsers.add_parser("meeting", parents=[_quiet], help="Fetch meeting slot availabilities for a child")
     meeting_parser.add_argument("--child", help="Switch to this child's context before fetching")
     att2_parser = subparsers.add_parser("attachment", parents=[_quiet], help="Fetch an attachment and write bytes to stdout")
-    att2_parser.add_argument("url", help="Attachment URL path (from news detail attachments[].url)")
+    att2_parser.add_argument("url", nargs="?", default=None, help="Attachment URL path (positional, deprecated - use --url)")
+    att2_parser.add_argument("--url", dest="url_flag", help="Attachment URL path (from news detail attachments[].url)")
     att2_parser.add_argument("--child", help="Switch to this child's context before fetching")
     status_parser = subparsers.add_parser("status", parents=[_quiet], help="Show configuration and session status")
     status_parser.add_argument("--json", dest="json_output", action="store_true", help="Output status as JSON to stdout")
 
     args = parser.parse_args()
+
+    if getattr(args, "debug", False):
+        _configure_debug()
 
     if args.command is None:
         use_color = _should_use_color(getattr(args, "no_color", False))
@@ -309,7 +328,7 @@ def main():
 
     try:
         if args.command == "setup":
-            _setup(quiet=args.quiet)
+            _setup(quiet=args.quiet, no_input=getattr(args, "no_input", False))
         elif args.command == "notifications":
             _notifications(args)
         elif args.command == "messages":
@@ -336,10 +355,10 @@ def main():
         emit_error("connection_failed", "Connection failed. Check your network.", exit_code=EXIT_NETWORK)
 
 
-def _setup(quiet=False):
-    if sys.stdin.isatty():
+def _setup(quiet=False, no_input=False):
+    if not no_input and sys.stdin.isatty():
         print_logo(_should_use_color())
-    if not sys.stdin.isatty():
+    if no_input or not sys.stdin.isatty():
         personnummer = os.environ.get("PERSONNUMMER")
         if not personnummer:
             emit_error(
@@ -350,7 +369,7 @@ def _setup(quiet=False):
         if not personnummer.isdigit() or len(personnummer) != 12:
             emit_error("invalid_input", "Invalid personnummer. Must be 12 digits (YYYYMMDDXXXX).", exit_code=EXIT_USAGE)
         _write_config(f"PERSONNUMMER={personnummer}\n", quiet)
-        login(personnummer, session_path=str(SESSION_FILE))
+        login(personnummer, session_path=str(SESSION_FILE), quiet=quiet)
         _progress("Authenticated.", quiet)
         _print_status(_get_status())
         return
@@ -376,20 +395,20 @@ def _setup(quiet=False):
     _print_status(_get_status())
 
 
-def _get_session():
+def _get_session(quiet=False):
     """Authenticate and return a session. Exits if not configured."""
     config = dotenv_values(CONFIG_FILE)
     personnummer = config.get("PERSONNUMMER")
     if not personnummer:
         emit_error("not_configured", "PERSONNUMMER not set. Run: deformentor setup", exit_code=EXIT_AUTH)
-    return login(personnummer, session_path=str(SESSION_FILE))
+    return login(personnummer, session_path=str(SESSION_FILE), quiet=quiet)
 
 
 def _notifications(args):
     config = dotenv_values(CONFIG_FILE)
     since = _resolve_since(args.since, config)
     until = _resolve_until(getattr(args, "until", None))
-    session = _get_session()
+    session = _get_session(quiet=args.quiet)
     _progress("Fetching notifications...", args.quiet)
     result = fetch_all_notifications(session)
     result = _filter_children(result, args.child)
@@ -408,9 +427,11 @@ def _messages(args):
     config = dotenv_values(CONFIG_FILE)
     since = _resolve_since(args.since, config)
     until = _resolve_until(getattr(args, "until", None))
-    session = _get_session()
+    session = _get_session(quiet=args.quiet)
     _progress("Fetching messages...", args.quiet)
-    result = fetch_all_messages(session)
+    fetch_all_pages = getattr(args, "all_pages", False)
+    max_pages = getattr(args, "max_pages", 50)
+    result = fetch_all_messages(session, fetch_all_pages=fetch_all_pages, max_pages=max_pages)
     result = _filter_children(result, args.child)
     if args.child and not result:
         print(f"Warning: no child matching '{args.child}'", file=sys.stderr)
@@ -421,7 +442,7 @@ def _messages(args):
 
 
 def _calendar(args):
-    session = _get_session()
+    session = _get_session(quiet=args.quiet)
     if args.child:
         _resolve_and_switch_child(session, args.child)
     _progress("Fetching calendar event...", args.quiet)
@@ -430,7 +451,7 @@ def _calendar(args):
 
 
 def _attendance(args):
-    session = _get_session()
+    session = _get_session(quiet=args.quiet)
     if args.child:
         _resolve_and_switch_child(session, args.child)
     _progress("Fetching attendance detail...", args.quiet)
@@ -439,7 +460,7 @@ def _attendance(args):
 
 
 def _news(args):
-    session = _get_session()
+    session = _get_session(quiet=args.quiet)
     if args.child:
         _resolve_and_switch_child(session, args.child)
     _progress("Fetching news item...", args.quiet)
@@ -450,7 +471,7 @@ def _news(args):
 
 
 def _meeting(args):
-    session = _get_session()
+    session = _get_session(quiet=args.quiet)
     if args.child:
         _resolve_and_switch_child(session, args.child)
     _progress("Fetching meeting availabilities...", args.quiet)
@@ -459,11 +480,19 @@ def _meeting(args):
 
 
 def _attachment(args):
-    session = _get_session()
+    session = _get_session(quiet=args.quiet)
     if args.child:
         _resolve_and_switch_child(session, args.child)
+    url = getattr(args, "url_flag", None) or args.url
+    if url is None:
+        emit_error("usage_error", "attachment requires a URL. Use: deformentor attachment --url <path>", exit_code=EXIT_USAGE)
+    if args.url and not getattr(args, "url_flag", None):
+        print("Warning: positional URL argument is deprecated. Use --url instead.", file=sys.stderr)
     _progress("Fetching attachment...", args.quiet)
-    data = get_attachment(session, args.url)
+    try:
+        data = get_attachment(session, url)
+    except ValueError as e:
+        emit_error("invalid_input", str(e), exit_code=EXIT_USAGE)
     if not data:
         emit_error("not_found", "Attachment not found or empty response.", exit_code=EXIT_NOT_FOUND)
     sys.stdout.buffer.write(data)
