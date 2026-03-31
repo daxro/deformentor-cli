@@ -729,6 +729,7 @@ class TestAttachmentCommand:
         buf = BytesIO()
         fake_stdout = MagicMock()
         fake_stdout.buffer = buf
+        fake_stdout.isatty = lambda: False
         with mpatch("sys.stdout", fake_stdout):
             _attachment(args)
         assert buf.getvalue() == b"%PDF-1.4 test"
@@ -750,6 +751,7 @@ class TestAttachmentCommand:
         buf = BytesIO()
         fake_stdout = MagicMock()
         fake_stdout.buffer = buf
+        fake_stdout.isatty = lambda: False
         with mpatch("sys.stdout", fake_stdout):
             _attachment(args)
         mock_switch.assert_called_once_with(mock_login.return_value, "Astrid")

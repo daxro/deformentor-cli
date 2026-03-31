@@ -67,17 +67,25 @@ deformentor notifications --type calendar  # filter by type
 deformentor notifications --since 2026-01-01 --until 2026-03-31
 deformentor messages                       # messages only (last 30 days)
 deformentor messages --all-pages           # fetch all message pages
+deformentor messages --all-pages --max-pages 10  # fetch up to 10 pages
 deformentor calendar <id>                  # calendar event detail
 deformentor attendance <id>                # leave request detail
 deformentor news <id>                      # news item detail
 deformentor news <id> --child Anna         # news item for specific child
 deformentor meeting                        # meeting slot availabilities
+deformentor meeting --child Anna           # meeting slots for specific child
 deformentor attachment --url "/path" > f.pdf  # download attachment to file
+deformentor attachment --url "/path" --child Anna > f.pdf  # attachment for specific child
+```
+
+`--child` works on all item commands: `calendar`, `attendance`, `news`, `meeting`, and `attachment`.
+
+```bash
 deformentor status                         # human-readable status
 deformentor status --json                  # machine-readable status
 ```
 
-All data commands output JSON to stdout. Progress messages go to stderr (suppress with `-q`). Use `--fields date,type` to filter output fields, `--debug` to log HTTP traffic.
+All data commands output JSON to stdout. Progress messages go to stderr (suppress with `-q`). Use `--fields date,type` to filter output fields, `--debug` to log HTTP traffic, `--version` to print the installed version. The `messages` subcommand supports `--max-pages` (int, default 50) to cap the number of pages fetched when using `--all-pages`.
 
 The short alias `dfm` is also available (e.g., `dfm notifications`).
 

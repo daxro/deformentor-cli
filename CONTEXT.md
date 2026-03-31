@@ -12,6 +12,7 @@ deformentor_cli/
   freja.py    - Freja eID+ polling (submit personnummer, poll for phone approval)
   errors.py   - Structured JSON error output, exit codes
   paths.py    - XDG-compliant config/state paths
+  __init__.py  - Public API re-exports (login, new_session, etc.)
 ```
 
 ## Data flow

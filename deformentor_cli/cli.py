@@ -24,7 +24,7 @@ from deformentor_cli.api import (
     fetch_all_notifications, fetch_all_messages, get_attachment, get_attendance_detail,
     get_calendar_event, get_children, get_meeting_availabilities, get_news_detail, switch_child,
 )
-from deformentor_cli.paths import CONFIG_DIR, CONFIG_FILE, SESSION_FILE, STATE_DIR
+from deformentor_cli.paths import CONFIG_DIR, CONFIG_FILE, SESSION_FILE
 
 _LOGO_LINES = [
     r"    _      __                       _               ___ _    ___ ",
@@ -323,7 +323,7 @@ def main():
   deformentor notifications --type calendar  Filter by type
   deformentor messages --since 2026-01-01    Messages since a date
   deformentor news 12345                     News item detail
-  deformentor attachment "/path" > file.pdf  Download attachment""",
+  deformentor attachment --url "/path" > file.pdf  Download attachment""",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         add_help=False,
     )
