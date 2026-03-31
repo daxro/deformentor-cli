@@ -1,4 +1,5 @@
 import json
+import stat
 import time
 import http.cookiejar
 import os
@@ -330,3 +331,19 @@ class TestSessionPersistence:
             assert result is False
         finally:
             os.unlink(path)
+
+
+class TestSessionFilePermissions:
+    def test_save_session_creates_file_with_0600(self):
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+            path = f.name
+        try:
+            os.unlink(path)  # Remove so save_session creates it
+            session = MagicMock()
+            session.cookies = requests.cookies.RequestsCookieJar()
+            save_session(session, path)
+            mode = os.stat(path).st_mode & 0o777
+            assert mode == 0o600
+        finally:
+            if os.path.exists(path):
+                os.unlink(path)

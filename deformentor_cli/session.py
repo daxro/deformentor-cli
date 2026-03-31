@@ -219,7 +219,7 @@ def verify_authenticated(session):
 
 
 def save_session(session, path="session.json"):
-    """Save session cookies to a JSON file."""
+    """Save session cookies to a JSON file with restricted permissions."""
     cookies = []
     for c in session.cookies:
         cookies.append({
@@ -232,7 +232,9 @@ def save_session(session, path="session.json"):
         })
     path_obj = Path(path)
     path_obj.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as f:
+    # Write with restricted permissions (owner read/write only)
+    fd = os.open(str(path_obj), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
         json.dump(cookies, f, indent=2)
 
 
