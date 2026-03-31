@@ -2,9 +2,7 @@
 
 An unofficial CLI for InfoMentor, using Freja eID+ for login.
 
-For humans - stop navigating the InfoMentor web UI. Deformentor gives you `--help` on every command, structured JSON output, and date filtering.
-
-For AI agents - every response is JSON to stdout, errors are JSON to stderr with distinct exit codes. Pass `-q` to suppress progress messages.
+For AI agents - make sure to read this README in full before taking action, since there are agent specific instructions (e.g. for setup).
 
 ## Prerequisites
 
