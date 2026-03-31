@@ -11,6 +11,12 @@ from importlib.metadata import version as _pkg_version, PackageNotFoundError
 import requests
 from dotenv import dotenv_values
 
+try:
+    import argcomplete
+    _HAS_ARGCOMPLETE = True
+except ImportError:
+    _HAS_ARGCOMPLETE = False
+
 from deformentor_cli.errors import (
     FrejaError, emit_error, EXIT_AUTH, EXIT_NETWORK, EXIT_NOT_FOUND, EXIT_USAGE,
 )
@@ -131,7 +137,7 @@ def _print_status(status):
 def _status(args):
     status = _get_status()
     if args.json_output:
-        print(json.dumps(status, ensure_ascii=False, indent=2))
+        _output_json(status, args)
         return
     _print_status(status)
 
@@ -256,6 +262,48 @@ def _configure_debug():
     logging.getLogger("urllib3").setLevel(logging.DEBUG)
 
 
+def _filter_fields(data, fields):
+    """Filter JSON output to only include specified fields.
+
+    Supports dot-notation for nested fields (e.g., 'notifications.date').
+    Returns data unchanged if fields is None.
+    """
+    if fields is None:
+        return data
+    if isinstance(data, list):
+        return [_filter_fields(item, fields) for item in data]
+    if not isinstance(data, dict):
+        return data
+
+    result = {}
+    top_level = set()
+    nested = {}
+    for field in fields:
+        parts = field.split(".", 1)
+        if len(parts) == 1:
+            top_level.add(parts[0])
+        else:
+            nested.setdefault(parts[0], []).append(parts[1])
+
+    for key in top_level:
+        if key in data:
+            result[key] = data[key]
+
+    for key, sub_fields in nested.items():
+        if key in data:
+            result[key] = _filter_fields(data[key], sub_fields)
+
+    return result
+
+
+def _output_json(data, args):
+    """Print data as JSON to stdout, applying --fields filter if set."""
+    fields = getattr(args, "fields", None)
+    field_list = [f.strip() for f in fields.split(",")] if isinstance(fields, str) and fields else None
+    data = _filter_fields(data, field_list)
+    print(json.dumps(data, ensure_ascii=False, indent=2))
+
+
 class _LogoHelpAction(argparse.Action):
     def __init__(self, option_strings, dest=argparse.SUPPRESS, default=argparse.SUPPRESS, help=None):
         super().__init__(option_strings=option_strings, dest=dest, default=default, nargs=0, help=help)
@@ -271,6 +319,14 @@ def main():
     parser = _DeformentorParser(
         prog="deformentor",
         description="Fetch school notifications and messages from InfoMentor via Freja eID+.",
+        epilog="""examples:
+  deformentor notifications                  Notifications from last 30 days
+  deformentor notifications --child Anna     Filter by child
+  deformentor notifications --type calendar  Filter by type
+  deformentor messages --since 2026-01-01    Messages since a date
+  deformentor news 12345                     News item detail
+  deformentor attachment "/path" > file.pdf  Download attachment""",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
         add_help=False,
     )
     parser.add_argument("-h", "--help", action=_LogoHelpAction, help="Show this message and exit")
@@ -279,6 +335,7 @@ def main():
     parser.add_argument("--no-color", action="store_true", help="Disable colored output")
     parser.add_argument("--no-input", action="store_true", help="Never prompt for input (fail if input would be needed)")
     parser.add_argument("--debug", action="store_true", help="Log HTTP requests and responses to stderr")
+    parser.add_argument("--fields", help="Comma-separated list of fields to include in output")
 
     # Shared parent parser so -q is accepted after the subcommand name too
     _quiet = argparse.ArgumentParser(add_help=False)
@@ -286,15 +343,25 @@ def main():
 
     subparsers = parser.add_subparsers(dest="command", title="commands", parser_class=_DeformentorParser)
     subparsers.add_parser("setup", parents=[_quiet], help="Configure personnummer for login")
-    notif_parser = subparsers.add_parser("notifications", parents=[_quiet], help="Fetch notifications and messages for all children")
+    notif_parser = subparsers.add_parser("notifications", parents=[_quiet],
+        help="Fetch notifications and messages for all children",
+        epilog="""examples:
+  deformentor notifications --since all       All notifications, no date limit
+  deformentor notifications --child Anna      Filter by child name
+  deformentor notifications --type attendance  Filter by notification type""",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     notif_parser.add_argument("--child", help="Filter by child firstname")
     notif_parser.add_argument("--type", help="Filter by type (attendance, calendar, news, meeting, message)")
     notif_parser.add_argument("--since", help="Start date (YYYY-MM-DD, inclusive). Default: 30 days ago. 'all' for no limit.")
-    # notif_parser.add_argument("--until", help="End date (YYYY-MM-DD, inclusive). Default: no limit. 'all' to disable.")
-    msg_parser = subparsers.add_parser("messages", parents=[_quiet], help="Fetch messages for all children")
+    msg_parser = subparsers.add_parser("messages", parents=[_quiet],
+        help="Fetch messages for all children",
+        epilog="""examples:
+  deformentor messages --child Anna       Messages for one child
+  deformentor messages --since 2026-01-01  Messages since a date
+  deformentor messages --since all         All messages""",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     msg_parser.add_argument("--child", help="Filter by child firstname")
     msg_parser.add_argument("--since", help="Start date (YYYY-MM-DD, inclusive). Default: 30 days ago. 'all' for no limit.")
-    # msg_parser.add_argument("--until", help="End date (YYYY-MM-DD, inclusive). Default: no limit. 'all' to disable.")
     msg_parser.add_argument("--all-pages", action="store_true", help="Fetch all message pages (default: page 1 only)")
     msg_parser.add_argument("--max-pages", type=int, default=50, help="Maximum pages to fetch with --all-pages (default: 50)")
     cal_parser = subparsers.add_parser("calendar", parents=[_quiet], help="Fetch a calendar event by ID")
@@ -308,13 +375,20 @@ def main():
     news_parser.add_argument("--child", help="Switch to this child's context before fetching")
     meeting_parser = subparsers.add_parser("meeting", parents=[_quiet], help="Fetch meeting slot availabilities for a child")
     meeting_parser.add_argument("--child", help="Switch to this child's context before fetching")
-    att2_parser = subparsers.add_parser("attachment", parents=[_quiet], help="Fetch an attachment and write bytes to stdout")
+    att2_parser = subparsers.add_parser("attachment", parents=[_quiet],
+        help="Fetch an attachment and write bytes to stdout",
+        epilog="""examples:
+  deformentor attachment "/Resources/Resource/Download/123?api=IM2" > doc.pdf
+  deformentor attachment --url "/Resources/Resource/Download/123?api=IM2" > doc.pdf""",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     att2_parser.add_argument("url", nargs="?", default=None, help="Attachment URL path (positional, deprecated - use --url)")
     att2_parser.add_argument("--url", dest="url_flag", help="Attachment URL path (from news detail attachments[].url)")
     att2_parser.add_argument("--child", help="Switch to this child's context before fetching")
     status_parser = subparsers.add_parser("status", parents=[_quiet], help="Show configuration and session status")
     status_parser.add_argument("--json", dest="json_output", action="store_true", help="Output status as JSON to stdout")
 
+    if _HAS_ARGCOMPLETE:
+        argcomplete.autocomplete(parser)
     args = parser.parse_args()
 
     if getattr(args, "debug", False):
@@ -420,7 +494,7 @@ def _notifications(args):
         entry["notifications"] = _filter_items_until(entry["notifications"], until)
     if args.type and args.type.lower() not in KNOWN_NOTIFICATION_TYPES:
         print(f"Warning: '{args.type}' is not a known type. Known types: {', '.join(sorted(KNOWN_NOTIFICATION_TYPES))}", file=sys.stderr)
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    _output_json(result, args)
 
 
 def _messages(args):
@@ -438,7 +512,7 @@ def _messages(args):
     for entry in result:
         entry["messages"] = _filter_items_since(entry["messages"], since)
         entry["messages"] = _filter_items_until(entry["messages"], until)
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    _output_json(result, args)
 
 
 def _calendar(args):
@@ -447,7 +521,7 @@ def _calendar(args):
         _resolve_and_switch_child(session, args.child)
     _progress("Fetching calendar event...", args.quiet)
     result = get_calendar_event(session, args.id)
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    _output_json(result, args)
 
 
 def _attendance(args):
@@ -456,7 +530,7 @@ def _attendance(args):
         _resolve_and_switch_child(session, args.child)
     _progress("Fetching attendance detail...", args.quiet)
     result = get_attendance_detail(session, args.id)
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    _output_json(result, args)
 
 
 def _news(args):
@@ -467,7 +541,7 @@ def _news(args):
     result = get_news_detail(session, args.id)
     if result is None:
         emit_error("not_found", f"News item {args.id} not found.", exit_code=EXIT_NOT_FOUND)
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    _output_json(result, args)
 
 
 def _meeting(args):
@@ -476,7 +550,7 @@ def _meeting(args):
         _resolve_and_switch_child(session, args.child)
     _progress("Fetching meeting availabilities...", args.quiet)
     result = get_meeting_availabilities(session)
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    _output_json(result, args)
 
 
 def _attachment(args):
