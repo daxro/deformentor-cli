@@ -39,7 +39,7 @@ Prompts for your 12-digit personnummer, then authenticates via Freja eID+ (appro
 Non-interactive (for agents/CI):
 
 ```bash
-PERSONNUMMER=200001011234 deformentor setup
+PERSONNUMMER=200001011234 deformentor setup --no-input
 ```
 
 ## Configuration
@@ -64,20 +64,22 @@ deformentor notifications                  # last 30 days of notifications
 deformentor notifications --since all      # all notifications, no date limit
 deformentor notifications --child Anna     # filter by child
 deformentor notifications --type calendar  # filter by type
-deformentor notifications --since 2026-01-01
+deformentor notifications --since 2026-01-01 --until 2026-03-31
 deformentor messages                       # messages only (last 30 days)
+deformentor messages --all-pages           # fetch all message pages
 deformentor calendar <id>                  # calendar event detail
 deformentor attendance <id>                # leave request detail
 deformentor news <id>                      # news item detail
 deformentor news <id> --child Anna         # news item for specific child
 deformentor meeting                        # meeting slot availabilities
-deformentor meeting --child Anna           # meeting slots for specific child
-deformentor attachment <url> > doc.docx    # download attachment to file
+deformentor attachment --url "/path" > f.pdf  # download attachment to file
 deformentor status                         # human-readable status
 deformentor status --json                  # machine-readable status
 ```
 
-All data commands output JSON to stdout. Progress messages go to stderr. Use `-q` / `--quiet` to suppress progress.
+All data commands output JSON to stdout. Progress messages go to stderr (suppress with `-q`). Use `--fields date,type` to filter output fields, `--debug` to log HTTP traffic.
+
+The short alias `dfm` is also available (e.g., `dfm notifications`).
 
 ## Exit Codes
 
@@ -179,8 +181,14 @@ Meeting availabilities (`deformentor meeting`):
 }
 ```
 
-`deformentor attachment <url>` writes raw bytes to stdout. Redirect to a file:
+`deformentor attachment` writes raw bytes to stdout. Redirect to a file:
 
 ```bash
-deformentor attachment "/Resources/Resource/Download/abc123" > doc.docx
+deformentor attachment --url "/Resources/Resource/Download/abc123" > doc.docx
+```
+
+## Testing
+
+```bash
+uv run pytest
 ```
