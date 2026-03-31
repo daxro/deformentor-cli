@@ -166,6 +166,47 @@ class TestGetNotifications:
             get_notifications(session)
 
 
+class TestGetMessagesAllPages:
+    def test_fetches_all_pages_when_requested(self):
+        session = MagicMock()
+        page1_resp = MagicMock()
+        page1_resp.json.return_value = {"items": [{"id": 1, "messageSubject": "A", "timeSent": "2026-03-28"}], "page": 0, "more": True}
+        page1_resp.raise_for_status = MagicMock()
+        page2_resp = MagicMock()
+        page2_resp.json.return_value = {"items": [{"id": 2, "messageSubject": "B", "timeSent": "2026-03-27"}], "page": 1, "more": False}
+        page2_resp.raise_for_status = MagicMock()
+        session.post.side_effect = [page1_resp, page2_resp]
+
+        result = get_messages(session, fetch_all_pages=True)
+        assert len(result) == 2
+        assert session.post.call_count == 2
+
+    def test_respects_page_limit(self):
+        session = MagicMock()
+        page1_resp = MagicMock()
+        page1_resp.json.return_value = {"items": [{"id": 1, "messageSubject": "A", "timeSent": "2026-03-28"}], "page": 0, "more": True}
+        page1_resp.raise_for_status = MagicMock()
+        page2_resp = MagicMock()
+        page2_resp.json.return_value = {"items": [{"id": 2, "messageSubject": "B", "timeSent": "2026-03-27"}], "page": 1, "more": True}
+        page2_resp.raise_for_status = MagicMock()
+        session.post.side_effect = [page1_resp, page2_resp]
+
+        result = get_messages(session, fetch_all_pages=True, max_pages=2)
+        assert len(result) == 2
+        assert session.post.call_count == 2
+
+    def test_default_fetches_single_page(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.json.return_value = {"items": [{"id": 1, "messageSubject": "A", "timeSent": "2026-03-28"}], "page": 0, "more": True}
+        resp.raise_for_status = MagicMock()
+        session.post.return_value = resp
+
+        result = get_messages(session)
+        assert len(result) == 1
+        assert session.post.call_count == 1
+
+
 class TestGetMessages:
     def test_posts_with_page_param(self):
         session = MagicMock()

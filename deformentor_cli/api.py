@@ -65,25 +65,38 @@ def get_notifications(session):
     return resp.json()["notifications"]
 
 
-def get_messages(session):
+def get_messages(session, fetch_all_pages=False, max_pages=50):
     """Get messages for the currently selected child.
 
     Messages are scoped to the currently selected child. The caller must call
     switch_child() before calling this to set the correct context.
 
-    Only fetches page 1. Warns if more pages exist.
+    Args:
+        session: Authenticated requests.Session.
+        fetch_all_pages: If True, paginate through all pages.
+        max_pages: Maximum number of pages to fetch (safety limit).
+
+    Returns:
+        List of raw message dicts.
     """
-    resp = session.post(
-        f"{BASE_URL}/Message/Message/GetMessages",
-        json={"page": 1},
-        headers=AJAX_HEADERS,
-        timeout=HTTP_TIMEOUT,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    if data.get("more"):
-        print("Warning: additional message pages exist but were not fetched", file=sys.stderr)
-    return data["items"]
+    all_items = []
+    page = 1
+    for _ in range(max_pages):
+        resp = session.post(
+            f"{BASE_URL}/Message/Message/GetMessages",
+            json={"page": page},
+            headers=AJAX_HEADERS,
+            timeout=HTTP_TIMEOUT,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        all_items.extend(data["items"])
+        if not fetch_all_pages or not data.get("more"):
+            if not fetch_all_pages and data.get("more"):
+                print("Warning: additional message pages exist but were not fetched", file=sys.stderr)
+            break
+        page += 1
+    return all_items
 
 
 def get_attendance_detail(session, request_id):
@@ -292,14 +305,17 @@ def fetch_all_notifications(session):
     return result
 
 
-def fetch_all_messages(session):
+def fetch_all_messages(session, fetch_all_pages=False, max_pages=50):
     """Get messages for all children.
 
     1. Get children list from hub page
     2. For each child: switch context, get messages
     3. Format and sort by date descending
 
-    Note: get_messages only fetches page 1. A warning is emitted if more exist.
+    Args:
+        session: Authenticated requests.Session.
+        fetch_all_pages: If True, paginate through all pages per child.
+        max_pages: Maximum number of pages to fetch per child (safety limit).
 
     Returns list of dicts with child name, child_id, and messages list.
     """
@@ -307,7 +323,7 @@ def fetch_all_messages(session):
     result = []
     for child in children:
         switch_child(session, child["id"])
-        raw_messages = get_messages(session)
+        raw_messages = get_messages(session, fetch_all_pages=fetch_all_pages, max_pages=max_pages)
         messages = [_normalize_message_summary(m) for m in raw_messages]
         messages.sort(key=lambda x: x["date"], reverse=True)
         result.append({
