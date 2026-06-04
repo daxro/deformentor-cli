@@ -65,7 +65,7 @@ deformentor attachment --url "/path" > f.pdf  # download attachment to file
 deformentor attachment --url "/path" --child CHILD_NAME > f.pdf
 ```
 
-`--child` works as a filter on `notifications` and `messages`, and as a child-context switch on `calendar`, `attendance`, `news`, `meeting`, `comment`, and `attachment`. Matching is case-insensitive substring against the full child name.
+`--child` works as a filter on `notifications` and `messages`, and as a child-context switch on `calendar`, `attendance`, `news`, `meeting`, `comment`, and `attachment`. Matching is case-insensitive substring against the full child name. For `comment --apply`, the match must be exact or unique so writes cannot silently use the wrong child.
 
 ```bash
 deformentor status                         # human-readable status
@@ -91,13 +91,13 @@ For agents: pipe through `jq` for field extraction, e.g. `deformentor notificati
 | --until DATE | End date (YYYY-MM-DD or 'all'). No default upper bound |
 | --all-pages | Fetch all pages (messages only) |
 | --max-pages N | Max pages to fetch with --all-pages (default 50, messages only) |
-| --child NAME | Filter or switch by child name (case-insensitive substring) |
+| --child NAME | Filter or switch by child name (case-insensitive substring; `comment --apply` requires exact or unique match) |
 | --date DATE | Comment date for `comment` in exact `YYYY-MM-DD` format |
-| --comment TEXT | Exact text for `comment` preview/apply |
+| --comment TEXT | Exact text for `comment` preview/apply; whitespace is preserved |
 | --apply | Actually write `comment` after safety checks |
 | --confirm | Required together with `--apply` |
 | --overwrite-existing | Required to replace an existing non-empty time registration comment |
-| --destination-log PATH | Optional JSONL log file appended after a verified comment write |
+| --destination-log PATH | Optional JSONL log file appended after a verified comment write; file is chmod `0600` |
 | --type TYPE | Filter notification type (attendance, calendar, news, meeting, message) |
 | --json | Output as JSON (status only) |
 
@@ -137,7 +137,7 @@ Errors are emitted as JSON to stderr:
 
 For agents: sessions expire and the CLI re-authenticates automatically, which requires phone approval. If a command hangs or returns exit code 3, tell the user to check their phone for a Freja prompt. `-q` suppresses the "approve in Freja" stderr message, so assume re-auth is in progress. Setup only needs re-running if the error contains `"not_configured"` - expired sessions are handled automatically.
 
-For agents: `comment` defaults to read/preview mode. Do not run `--apply` unless David has explicitly confirmed the exact write. Replacing an existing non-empty comment also requires `--overwrite-existing`.
+For agents: `comment` defaults to read/preview mode. Do not run `--apply` unless David has explicitly confirmed the exact write. Replacing an existing non-empty comment also requires `--overwrite-existing`. For writes, use an exact or unique `--child` match; ambiguous child matches exit before writing.
 
 ## Output
 
@@ -248,10 +248,14 @@ Safety notes for `comment`:
 
 - Default is read/preview; no write happens unless `--apply --confirm` is given.
 - Replacing an existing non-empty comment also requires `--overwrite-existing`.
+- For `--apply`, `--child` must be an exact or unique match; ambiguous matches exit before writing.
 - The existing comment and owner are shown before any write.
+- `--comment` is kept exactly as provided; whitespace is preserved and never silently trimmed.
+- The command validates local errors such as bad date, empty comment, and missing `--confirm` before authentication/network calls.
 - The command uses local date forms like `YYYY-MM-DD` / `YYYY-MM-DDT00:00:00`, never UTC `Z` timestamps.
 - Optional Botsson logging after a verified write:
   `deformentor comment --child CHILD_NAME --date 2026-06-05 --comment "COMMENT_TEXT" --apply --confirm --destination-log "$HERMES_HOME/sources/informentor/destination.log"`
+- Destination logs are appended only after a verified write and the log file is chmod `0600`. Plain filenames such as `destination.log` are supported.
 
 ## Uninstall
 

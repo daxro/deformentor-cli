@@ -196,8 +196,6 @@ def _validate_comment_text(comment_text):
     comment_text = "" if comment_text is None else comment_text
     if comment_text == "" or not comment_text.strip():
         emit_error("invalid_input", "--comment must not be empty.", exit_code=EXIT_USAGE)
-    if comment_text != comment_text.strip():
-        emit_error("invalid_input", "--comment must not start or end with whitespace.", exit_code=EXIT_USAGE)
     return comment_text
 
 
@@ -231,10 +229,18 @@ def _filter_items_until(items, until):
     return [item for item in items if item["date"][:10] <= until]
 
 
-def _resolve_and_switch_child(session, firstname):
-    """Find child by firstname (case-insensitive) and switch session context.
+def _child_first_name(child_name):
+    """Return display/first-name component from InfoMentor child name."""
+    return child_name.split(",")[-1].strip()
 
-    Exits if no match. Warns if multiple match (uses first).
+
+def _resolve_and_switch_child(session, firstname, require_unique=False):
+    """Find child by name (case-insensitive) and switch session context.
+
+    Exits if no match. Warns if multiple match in read mode. In write mode
+    (require_unique=True), multiple substring matches must collapse to one
+    exact first-name/full-name match; otherwise the command exits instead of
+    risking a write for the wrong child.
     """
     children = get_children(session)
     firstname_lower = firstname.lower()
@@ -243,7 +249,21 @@ def _resolve_and_switch_child(session, firstname):
         emit_error("child_not_found", f"No child matching '{firstname}'.", exit_code=EXIT_NOT_FOUND)
     if len(matches) > 1:
         names = ", ".join(c["name"] for c in matches)
-        print(f"Warning: multiple children match '{firstname}': {names}. Using first match.", file=sys.stderr)
+        exact_matches = [
+            c for c in matches
+            if c["name"].lower() == firstname_lower or _child_first_name(c["name"]).lower() == firstname_lower
+        ]
+        if require_unique:
+            if len(exact_matches) == 1:
+                matches = exact_matches
+            else:
+                emit_error(
+                    "ambiguous_child",
+                    f"'{firstname}' matches multiple children: {names}. Use a unique or exact child name.",
+                    exit_code=EXIT_USAGE,
+                )
+        else:
+            print(f"Warning: multiple children match '{firstname}': {names}. Using first match.", file=sys.stderr)
     switch_child(session, matches[0]["id"])
 
 
@@ -348,9 +368,10 @@ def main():
         description="Fetch school notifications and messages from InfoMentor via Freja eID+.",
         epilog="""examples:
   deformentor notifications                  Notifications from last 30 days
-  deformentor notifications --child Anna     Filter by child
+  deformentor notifications --child CHILD_NAME  Filter by child
   deformentor notifications --type calendar  Filter by type
   deformentor messages --since 2026-01-01    Messages since a date
+  deformentor comment --child CHILD_NAME --date 2026-06-05  Read time registration comment
   deformentor news 12345                     News item detail
   deformentor attachment --url "/path" > file.pdf  Download attachment""",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -421,15 +442,23 @@ def main():
         epilog="""examples:
   deformentor comment --child Felix --date 2026-06-05
   deformentor comment --child Felix --date 2026-06-06 --comment \"Hämtas av morfar\"
-  deformentor comment --child Felix --date 2026-06-05 --comment \"Hämtas av morfar\" --apply --confirm""",
+  deformentor comment --child Felix --date 2026-06-05 --comment \"Hämtas av morfar\" --apply --confirm
+
+safety:
+  default is preview/read-only; --apply --confirm is required to write
+  --child must be an exact or unique match when --apply writes
+  --comment is kept exactly as provided; whitespace is preserved
+  --overwrite-existing is required to replace another non-empty comment
+  --destination-log is appended only after a verified write and is chmod 0600
+  plain filenames such as destination.log are supported""",
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    pickup_parser.add_argument("--child", required=True, help="Switch to this child's context before reading or writing")
+    pickup_parser.add_argument("--child", required=True, help="Switch to this child's context before reading or writing; exact or unique match required for --apply")
     pickup_parser.add_argument("--date", required=True, help="Comment date in exact YYYY-MM-DD format")
-    pickup_parser.add_argument("--comment", help="Exact comment text to preview or write")
+    pickup_parser.add_argument("--comment", help="Exact comment text to preview or write; whitespace is preserved")
     pickup_parser.add_argument("--apply", action="store_true", help="Actually write the comment after all safety checks pass")
     pickup_parser.add_argument("--confirm", action="store_true", help="Required together with --apply to allow writing")
     pickup_parser.add_argument("--overwrite-existing", action="store_true", help="Required when replacing an existing non-empty comment")
-    pickup_parser.add_argument("--destination-log", help="Optional JSONL log path to append after a verified write")
+    pickup_parser.add_argument("--destination-log", help="Optional JSONL log path; appended after verified write and chmod 0600")
     att2_parser = subparsers.add_parser("attachment", parents=[_global_flags],
         help="Fetch an attachment and write bytes to stdout",
         epilog="""examples:
@@ -539,16 +568,26 @@ def _get_session(quiet=False):
 
 
 def _append_destination_log(path, entry):
-    """Append a JSONL destination log entry."""
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "a", encoding="utf-8") as fh:
+    """Append a JSONL destination log entry with private file permissions."""
+    directory = os.path.dirname(path)
+    if directory:
+        os.makedirs(directory, mode=0o700, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    with os.fdopen(fd, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    os.chmod(path, 0o600)
 
 
 def _pickup_comment(args):
-    session = _get_session(quiet=args.quiet)
     pickup_date = _validate_exact_pickup_date(args.date)
-    _resolve_and_switch_child(session, args.child)
+    proposed_comment = _validate_comment_text(args.comment) if args.comment is not None else None
+    if args.apply and proposed_comment is None:
+        emit_error("invalid_input", "--apply requires --comment.", exit_code=EXIT_USAGE)
+    if args.apply and not args.confirm:
+        emit_error("invalid_input", "--apply requires --confirm.", exit_code=EXIT_USAGE)
+
+    session = _get_session(quiet=args.quiet)
+    _resolve_and_switch_child(session, args.child, require_unique=args.apply)
     registration = None
 
     try:
@@ -559,7 +598,6 @@ def _pickup_comment(args):
     raw_comments = get_time_registration_comments(session, pickup_date)
     existing_comment = normalize_time_registration_comment(raw_comments)
 
-    proposed_comment = _validate_comment_text(args.comment) if args.comment is not None else None
     has_existing = existing_comment.get("found", False)
     existing_text = existing_comment.get("userComment") if has_existing else None
     existing_differs = bool(proposed_comment and has_existing and existing_text != proposed_comment)

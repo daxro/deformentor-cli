@@ -184,15 +184,13 @@ class TestPickupCommentFormatting:
         with pytest.raises(SystemExit):
             _validate_comment_text("   ")
 
-    def test_leading_whitespace_exits(self):
+    def test_keeps_leading_whitespace(self):
         from deformentor_cli.cli import _validate_comment_text
-        with pytest.raises(SystemExit):
-            _validate_comment_text(" Julia Welles")
+        assert _validate_comment_text(" Julia Welles") == " Julia Welles"
 
-    def test_trailing_whitespace_exits(self):
+    def test_keeps_trailing_whitespace(self):
         from deformentor_cli.cli import _validate_comment_text
-        with pytest.raises(SystemExit):
-            _validate_comment_text("Julia Welles ")
+        assert _validate_comment_text("Julia Welles ") == "Julia Welles "
 
 
 class TestFilterChildren:
@@ -594,6 +592,34 @@ class TestResolveAndSwitchChild:
         _resolve_and_switch_child(session, "Astrid")
         captured = capsys.readouterr()
         assert "multiple children match" in captured.err.lower()
+        mock_switch.assert_called_once_with(session, "5001001")
+
+    @patch("deformentor_cli.cli.switch_child")
+    @patch("deformentor_cli.cli.get_children")
+    def test_requires_unique_match_when_requested(self, mock_children, mock_switch, capsys):
+        from deformentor_cli.cli import _resolve_and_switch_child
+        mock_children.return_value = [
+            {"name": "Andersson, Astrid", "id": "5001001", "hybridMappingId": "m1", "selected": True},
+            {"name": "Andersson, Astrid Jr", "id": "9999", "hybridMappingId": "m3", "selected": False},
+        ]
+        session = MagicMock()
+        with pytest.raises(SystemExit) as exc_info:
+            _resolve_and_switch_child(session, "Astr", require_unique=True)
+        assert exc_info.value.code == 2
+        err = json.loads(capsys.readouterr().err)
+        assert "matches multiple children" in err["message"]
+        mock_switch.assert_not_called()
+
+    @patch("deformentor_cli.cli.switch_child")
+    @patch("deformentor_cli.cli.get_children")
+    def test_unique_mode_allows_single_exact_firstname_among_multiple_substrings(self, mock_children, mock_switch):
+        from deformentor_cli.cli import _resolve_and_switch_child
+        mock_children.return_value = [
+            {"name": "Andersson, Astrid", "id": "5001001", "hybridMappingId": "m1", "selected": True},
+            {"name": "Andersson, Astrid Jr", "id": "9999", "hybridMappingId": "m3", "selected": False},
+        ]
+        session = MagicMock()
+        _resolve_and_switch_child(session, "Astrid", require_unique=True)
         mock_switch.assert_called_once_with(session, "5001001")
 
 
@@ -1084,6 +1110,20 @@ class TestHelpExamples:
         captured = capsys.readouterr()
         assert "examples:" in captured.out.lower()
 
+    def test_comment_help_documents_safety_rules(self, capsys):
+        from deformentor_cli.cli import main
+        import sys
+        with pytest.raises(SystemExit):
+            sys.argv = ["deformentor", "comment", "--help"]
+            main()
+        captured = capsys.readouterr()
+        help_text = captured.out.lower()
+        assert "exact or unique" in help_text
+        assert "whitespace is preserved" in help_text
+        assert "verified write" in help_text
+        assert "0600" in help_text
+        assert "plain filenames" in help_text
+
 
 class TestEmitError:
     def test_writes_json_to_stderr(self, capsys):
@@ -1314,7 +1354,7 @@ class TestPickupCommentPreview:
 
         _pickup_comment(args)
 
-        mock_switch_child.assert_called_once_with(session, "Felix")
+        mock_switch_child.assert_called_once_with(session, "Felix", require_unique=False)
         captured = json.loads(capsys.readouterr().out)
         assert captured["mode"] == "preview"
         assert captured["existing_comment"]["found"] is False
@@ -1361,18 +1401,10 @@ class TestPickupCommentPreview:
 
 
 class TestPickupCommentApplySafety:
-    @patch("deformentor_cli.cli.save_time_registration_comment")
-    @patch("deformentor_cli.cli.get_time_registration_comments")
-    @patch("deformentor_cli.cli.get_time_registration_for_date")
-    @patch("deformentor_cli.cli._resolve_and_switch_child")
     @patch("deformentor_cli.cli._get_session")
-    def test_apply_requires_confirm(self, mock_get_session, mock_switch_child, mock_get_registration,
-                                    mock_get_comments, mock_save, capsys):
+    def test_apply_requires_confirm_before_session(self, mock_get_session, capsys):
         from deformentor_cli.cli import _pickup_comment
 
-        mock_get_session.return_value = MagicMock()
-        mock_get_registration.return_value = {"timeRegistrationId": 123}
-        mock_get_comments.return_value = []
         args = MagicMock(
             quiet=True,
             child="Felix",
@@ -1391,7 +1423,55 @@ class TestPickupCommentApplySafety:
         assert exc_info.value.code == 2
         err = json.loads(capsys.readouterr().err)
         assert "--confirm" in err["message"]
-        mock_save.assert_not_called()
+        mock_get_session.assert_not_called()
+
+    @patch("deformentor_cli.cli._get_session")
+    def test_invalid_date_exits_before_session(self, mock_get_session, capsys):
+        from deformentor_cli.cli import _pickup_comment
+
+        args = MagicMock(
+            quiet=True,
+            child="Felix",
+            date="today",
+            comment="Valfri kommentar",
+            apply=False,
+            confirm=False,
+            overwrite_existing=False,
+            destination_log=None,
+            fields=None,
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            _pickup_comment(args)
+
+        assert exc_info.value.code == 2
+        err = json.loads(capsys.readouterr().err)
+        assert "YYYY-MM-DD" in err["message"]
+        mock_get_session.assert_not_called()
+
+    @patch("deformentor_cli.cli._get_session")
+    def test_empty_comment_exits_before_session(self, mock_get_session, capsys):
+        from deformentor_cli.cli import _pickup_comment
+
+        args = MagicMock(
+            quiet=True,
+            child="Felix",
+            date="2026-06-05",
+            comment="",
+            apply=False,
+            confirm=False,
+            overwrite_existing=False,
+            destination_log=None,
+            fields=None,
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            _pickup_comment(args)
+
+        assert exc_info.value.code == 2
+        err = json.loads(capsys.readouterr().err)
+        assert "--comment" in err["message"]
+        mock_get_session.assert_not_called()
 
     @patch("deformentor_cli.cli.save_time_registration_comment")
     @patch("deformentor_cli.cli.get_time_registration_comments")
@@ -1536,6 +1616,16 @@ class TestPickupCommentApplySafety:
 
 
 class TestPickupCommentDestinationLog:
+    def test_append_destination_log_supports_plain_filename_and_private_permissions(self, tmp_path, monkeypatch):
+        from deformentor_cli.cli import _append_destination_log
+
+        monkeypatch.chdir(tmp_path)
+        _append_destination_log("destination.log", {"comment": "Valfri kommentar"})
+
+        log_path = tmp_path / "destination.log"
+        assert json.loads(log_path.read_text(encoding="utf-8"))["comment"] == "Valfri kommentar"
+        assert (log_path.stat().st_mode & 0o777) == 0o600
+
     @patch("deformentor_cli.cli.save_time_registration_comment")
     @patch("deformentor_cli.cli.get_time_registration_comments")
     @patch("deformentor_cli.cli.get_time_registration_for_date")
