@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from deformentor_cli.api import get_children, switch_child, get_notifications, get_messages, get_attendance_detail, get_calendar_event, get_news_detail, get_meeting_availabilities, fetch_all_notifications, fetch_all_messages, get_attachment
+from deformentor_cli.api import get_time_registrations, get_time_registration_for_date, get_time_registration_comments, save_time_registration_comment, normalize_time_registration_comment
 from deformentor_cli.api import _normalize_type_name, _extract_id_from_url, _normalize_notification, _normalize_message, _normalize_message_summary
 
 
@@ -271,6 +272,156 @@ class TestGetMessages:
 
         captured = capsys.readouterr()
         assert "additional" not in captured.err.lower()
+
+
+class TestTimeRegistrationApi:
+    def test_get_time_registrations_posts_expected_payload(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.json.return_value = {"items": [{"timeRegistrationId": 123, "date": "2026-06-05T00:00:00"}]}
+        resp.raise_for_status = MagicMock()
+        session.post.return_value = resp
+
+        result = get_time_registrations(session, "2026-06-05")
+
+        assert result == [{"timeRegistrationId": 123, "date": "2026-06-05T00:00:00"}]
+        url = session.post.call_args[0][0]
+        kwargs = session.post.call_args[1]
+        assert "/TimeRegistration/TimeRegistration/GetTimeRegistrations/" in url
+        assert kwargs["json"] == {
+            "date": "2026-06-05T00:00:00",
+            "showNextWeekIfNoMoreSchoolDays": False,
+        }
+        assert kwargs["headers"]["X-Requested-With"] == "XMLHttpRequest"
+
+    def test_get_time_registration_comments_posts_expected_payload(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.json.return_value = [{"parentCommentId": 10, "userComment": "Hämtas av: David"}]
+        resp.raise_for_status = MagicMock()
+        session.post.return_value = resp
+
+        result = get_time_registration_comments(session, "2026-06-05")
+
+        assert result == [{"parentCommentId": 10, "userComment": "Hämtas av: David"}]
+        url = session.post.call_args[0][0]
+        kwargs = session.post.call_args[1]
+        assert "/TimeRegistration/TimeRegistration/GetComments/" in url
+        assert kwargs["json"] == {"date": "2026-06-05T00:00:00"}
+        assert kwargs["headers"]["X-Requested-With"] == "XMLHttpRequest"
+
+    def test_get_time_registration_for_date_returns_matching_row(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.json.return_value = {
+            "items": [
+                {"timeRegistrationId": 999, "date": "2026-06-04T00:00:00"},
+                {"timeRegistrationId": 123, "date": "2026-06-05T12:00:00"},
+            ]
+        }
+        resp.raise_for_status = MagicMock()
+        session.post.return_value = resp
+
+        result = get_time_registration_for_date(session, "2026-06-05")
+
+        assert result["timeRegistrationId"] == 123
+
+    def test_get_time_registration_for_date_raises_when_missing(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.json.return_value = {"items": [{"timeRegistrationId": 999, "date": "2026-06-04T00:00:00"}]}
+        resp.raise_for_status = MagicMock()
+        session.post.return_value = resp
+
+        with pytest.raises(RuntimeError, match="2026-06-05"):
+            get_time_registration_for_date(session, "2026-06-05")
+
+    def test_http_errors_bubble_up(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.raise_for_status.side_effect = Exception("401 Unauthorized")
+        session.post.return_value = resp
+
+        with pytest.raises(Exception, match="401"):
+            get_time_registration_comments(session, "2026-06-05")
+
+
+class TestSaveTimeRegistrationComment:
+    def test_posts_expected_payload(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.json.return_value = {"success": True}
+        resp.raise_for_status = MagicMock()
+        session.post.return_value = resp
+
+        result = save_time_registration_comment(session, 0, "Hämtas av: Julia Welles", 123456)
+
+        assert result == {"success": True}
+        url = session.post.call_args[0][0]
+        kwargs = session.post.call_args[1]
+        assert "/TimeRegistration/TimeRegistration/SaveComment/" in url
+        assert kwargs["json"] == {
+            "commentId": 0,
+            "commentText": "Hämtas av: Julia Welles",
+            "timeRegistrationId": 123456,
+        }
+        assert kwargs["headers"]["X-Requested-With"] == "XMLHttpRequest"
+
+    def test_existing_comment_uses_parent_comment_id(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.json.return_value = {"success": True}
+        resp.raise_for_status = MagicMock()
+        session.post.return_value = resp
+
+        save_time_registration_comment(session, 10, "Hämtas av: Julia Welles", 123456)
+
+        assert session.post.call_args[1]["json"]["commentId"] == 10
+
+    def test_raises_when_success_is_false(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.json.return_value = {"success": False, "message": "denied"}
+        resp.raise_for_status = MagicMock()
+        session.post.return_value = resp
+
+        with pytest.raises(RuntimeError, match="denied"):
+            save_time_registration_comment(session, 0, "Hämtas av: Julia Welles", 123456)
+
+    def test_http_errors_bubble_up(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.raise_for_status.side_effect = Exception("500 Server Error")
+        session.post.return_value = resp
+
+        with pytest.raises(Exception, match="500"):
+            save_time_registration_comment(session, 0, "Hämtas av: Julia Welles", 123456)
+
+
+class TestNormalizeTimeRegistrationComment:
+    def test_returns_first_non_empty_comment_with_owner_fields(self):
+        raw = [
+            {"parentCommentId": 11, "userComment": "", "owner": "Romell, Lotta"},
+            {
+                "parentCommentId": 12,
+                "userComment": "Hämtas av: Lotta",
+                "owner": "Romell, Lotta",
+                "canEditComment": False,
+            },
+        ]
+
+        result = normalize_time_registration_comment(raw)
+
+        assert result["found"] is True
+        assert result["parentCommentId"] == 12
+        assert result["userComment"] == "Hämtas av: Lotta"
+        assert result["owner"] == "Romell, Lotta"
+        assert result["canEditComment"] is False
+
+    def test_returns_not_found_shape_when_no_comment_exists(self):
+        result = normalize_time_registration_comment([])
+
+        assert result == {"found": False}
 
 
 class TestNormalizeTypeName:

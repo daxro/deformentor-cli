@@ -46,7 +46,7 @@ This applies whenever a command fails with exit code 3 and `"not_configured"` er
 ```bash
 deformentor notifications                  # notifications (default: last 30 days)
 deformentor notifications --since all      # all notifications, no date limit
-deformentor notifications --child Anna     # filter by child
+deformentor notifications --child CHILD_NAME  # filter by child
 deformentor notifications --type calendar  # filter by type
 deformentor notifications --since 2026-01-01 --until 2026-03-31
 deformentor messages                       # messages (default: last 30 days)
@@ -55,14 +55,17 @@ deformentor messages --all-pages --max-pages 10  # fetch up to 10 pages
 deformentor calendar <id>                  # calendar event detail
 deformentor attendance <id>                # leave request detail
 deformentor news <id>                      # news item detail
-deformentor news <id> --child Anna         # news item for specific child
+deformentor news <id> --child CHILD_NAME   # news item for specific child
 deformentor meeting                        # meeting slot availabilities
-deformentor meeting --child Anna           # meeting slots for specific child
+deformentor meeting --child CHILD_NAME     # meeting slots for specific child
+deformentor comment --child CHILD_NAME --date 2026-06-05
+deformentor comment --child CHILD_NAME --date 2026-06-06 --comment "COMMENT_TEXT"
+deformentor comment --child CHILD_NAME --date 2026-06-05 --comment "COMMENT_TEXT" --apply --confirm
 deformentor attachment --url "/path" > f.pdf  # download attachment to file
-deformentor attachment --url "/path" --child Anna > f.pdf
+deformentor attachment --url "/path" --child CHILD_NAME > f.pdf
 ```
 
-`--child` works on all item commands: `calendar`, `attendance`, `news`, `meeting`, and `attachment`. Matching is case-insensitive substring against the full child name.
+`--child` works as a filter on `notifications` and `messages`, and as a child-context switch on `calendar`, `attendance`, `news`, `meeting`, `comment`, and `attachment`. Matching is case-insensitive substring against the full child name.
 
 ```bash
 deformentor status                         # human-readable status
@@ -70,9 +73,9 @@ deformentor status --json                  # machine-readable status
 deformentor reset                          # remove config and session files
 ```
 
-All data commands output JSON to stdout. Progress messages go to stderr (suppress with `-q`). Use `--fields date,type` to filter output fields, `--debug` to log HTTP traffic, `--version` to print the installed version.
+JSON-returning data commands write JSON to stdout. Progress messages go to stderr (suppress with `-q`). Use `--fields date,type` to filter output fields, `--debug` to log HTTP traffic, `--version` to print the installed version.
 
-The `attachment` command writes raw bytes to stdout. Redirect to a file - it exits with code 2 if output goes to a terminal.
+The `attachment` command writes raw bytes to stdout. Redirect to a file - it exits with code 2 if output goes to a terminal. `status` prints human-readable text by default and JSON only with `--json`.
 
 For agents: pipe through `jq` for field extraction, e.g. `deformentor notifications -q | jq '.[0].notifications[].type.name'`.
 
@@ -89,6 +92,12 @@ For agents: pipe through `jq` for field extraction, e.g. `deformentor notificati
 | --all-pages | Fetch all pages (messages only) |
 | --max-pages N | Max pages to fetch with --all-pages (default 50, messages only) |
 | --child NAME | Filter or switch by child name (case-insensitive substring) |
+| --date DATE | Comment date for `comment` in exact `YYYY-MM-DD` format |
+| --comment TEXT | Exact text for `comment` preview/apply |
+| --apply | Actually write `comment` after safety checks |
+| --confirm | Required together with `--apply` |
+| --overwrite-existing | Required to replace an existing non-empty time registration comment |
+| --destination-log PATH | Optional JSONL log file appended after a verified comment write |
 | --type TYPE | Filter notification type (attendance, calendar, news, meeting, message) |
 | --json | Output as JSON (status only) |
 
@@ -127,6 +136,8 @@ Errors are emitted as JSON to stderr:
 ```
 
 For agents: sessions expire and the CLI re-authenticates automatically, which requires phone approval. If a command hangs or returns exit code 3, tell the user to check their phone for a Freja prompt. `-q` suppresses the "approve in Freja" stderr message, so assume re-auth is in progress. Setup only needs re-running if the error contains `"not_configured"` - expired sessions are handled automatically.
+
+For agents: `comment` defaults to read/preview mode. Do not run `--apply` unless David has explicitly confirmed the exact write. Replacing an existing non-empty comment also requires `--overwrite-existing`.
 
 ## Output
 
@@ -210,6 +221,37 @@ Meeting availabilities (`deformentor meeting`):
   ]
 }
 ```
+
+Time registration comment preview (`deformentor comment --child CHILD_NAME --date 2026-06-06 --comment "COMMENT_TEXT"`):
+
+```json
+{
+  "child": "CHILD_NAME",
+  "date": "2026-06-06",
+  "date_input": "2026-06-06",
+  "mode": "preview",
+  "time_registration": {
+    "timeRegistrationId": 123456,
+    "found": true
+  },
+  "existing_comment": {
+    "found": false
+  },
+  "proposed_comment": "COMMENT_TEXT",
+  "write_performed": false,
+  "would_write_if_applied": true,
+  "blocked": false
+}
+```
+
+Safety notes for `comment`:
+
+- Default is read/preview; no write happens unless `--apply --confirm` is given.
+- Replacing an existing non-empty comment also requires `--overwrite-existing`.
+- The existing comment and owner are shown before any write.
+- The command uses local date forms like `YYYY-MM-DD` / `YYYY-MM-DDT00:00:00`, never UTC `Z` timestamps.
+- Optional Botsson logging after a verified write:
+  `deformentor comment --child CHILD_NAME --date 2026-06-05 --comment "COMMENT_TEXT" --apply --confirm --destination-log "$HERMES_HOME/sources/informentor/destination.log"`
 
 ## Uninstall
 

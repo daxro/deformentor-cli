@@ -188,6 +188,108 @@ def get_meeting_availabilities(session):
     return resp.json()
 
 
+def _format_local_date_payload(date_iso):
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_iso):
+        return f"{date_iso}T00:00:00"
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}T00:00:00", date_iso):
+        return date_iso
+    raise ValueError(f"Invalid local date format: {date_iso}")
+
+
+def get_time_registrations(session, date_iso):
+    """Fetch time registrations for a local calendar date."""
+    resp = session.post(
+        f"{BASE_URL}/TimeRegistration/TimeRegistration/GetTimeRegistrations/",
+        json={
+            "date": _format_local_date_payload(date_iso),
+            "showNextWeekIfNoMoreSchoolDays": False,
+        },
+        headers=AJAX_HEADERS,
+        timeout=HTTP_TIMEOUT,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if isinstance(data, dict):
+        return data.get("items") or data.get("timeRegistrations") or []
+    if isinstance(data, list):
+        return data
+    return []
+
+
+def get_time_registration_for_date(session, date_iso):
+    """Return the matching time registration row for a local calendar date."""
+    target_date = date_iso[:10]
+    for row in get_time_registrations(session, date_iso):
+        row_date = str(row.get("date") or row.get("startDate") or row.get("registrationDate") or "")[:10]
+        if row_date == target_date:
+            return row
+    raise RuntimeError(f"No time registration found for {target_date}")
+
+
+def get_time_registration_comments(session, date_iso):
+    """Fetch raw time registration comments for a local calendar date."""
+    resp = session.post(
+        f"{BASE_URL}/TimeRegistration/TimeRegistration/GetComments/",
+        json={"date": _format_local_date_payload(date_iso)},
+        headers=AJAX_HEADERS,
+        timeout=HTTP_TIMEOUT,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if isinstance(data, dict):
+        return data.get("comments") or data.get("items") or []
+    if isinstance(data, list):
+        return data
+    return []
+
+
+def save_time_registration_comment(session, comment_id, comment_text, time_registration_id):
+    """Save a time registration comment and return the raw response JSON."""
+    resp = session.post(
+        f"{BASE_URL}/TimeRegistration/TimeRegistration/SaveComment/",
+        json={
+            "commentId": comment_id,
+            "commentText": comment_text,
+            "timeRegistrationId": time_registration_id,
+        },
+        headers=AJAX_HEADERS,
+        timeout=HTTP_TIMEOUT,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if not data.get("success"):
+        raise RuntimeError(data.get("message") or "SaveComment returned success: false")
+    return data
+
+
+def normalize_time_registration_comment(raw_comments):
+    """Normalize the first non-empty time registration comment for CLI output."""
+    if isinstance(raw_comments, dict):
+        raw_comments = raw_comments.get("comments") or raw_comments.get("items") or []
+
+    for raw in raw_comments or []:
+        user_comment = raw.get("userComment") or ""
+        if not user_comment.strip():
+            continue
+        owner = (
+            raw.get("owner")
+            or raw.get("ownerName")
+            or raw.get("sender")
+            or raw.get("senderName")
+            or raw.get("createdBy")
+            or raw.get("userName")
+        )
+        return {
+            "found": True,
+            "parentCommentId": raw.get("parentCommentId", 0),
+            "userComment": user_comment,
+            "owner": owner,
+            "canEditComment": raw.get("canEditComment"),
+            "raw": raw,
+        }
+    return {"found": False}
+
+
 def _extract_id_from_url(url):
     """Extract ID from notification URL hash route. Returns str or None.
 

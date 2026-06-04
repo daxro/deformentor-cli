@@ -5,7 +5,7 @@ import json
 import os
 import re
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from importlib.metadata import version as _pkg_version, PackageNotFoundError
 
 import requests
@@ -22,7 +22,9 @@ from deformentor_cli.errors import (
 )
 from deformentor_cli.api import (
     fetch_all_notifications, fetch_all_messages, get_attachment, get_attendance_detail,
-    get_calendar_event, get_children, get_meeting_availabilities, get_news_detail, switch_child,
+    get_calendar_event, get_children, get_meeting_availabilities, get_news_detail,
+    get_time_registration_comments, get_time_registration_for_date,
+    normalize_time_registration_comment, save_time_registration_comment, switch_child,
 )
 from deformentor_cli.paths import CONFIG_DIR, CONFIG_FILE, SESSION_FILE
 
@@ -174,6 +176,29 @@ def _resolve_until(cli_value):
         return _validate_date_flag(cli_value, "--until")
     # Future: read DEFAULT_UNTIL_DAYS from config and compute date.today() + timedelta(days=days)
     return None
+
+
+def _validate_exact_pickup_date(value):
+    """Validate exact YYYY-MM-DD date for agent-facing CLI usage."""
+    normalized = (value or "").strip()
+    if not normalized:
+        emit_error("invalid_input", "--date is required for comment.", exit_code=EXIT_USAGE)
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", normalized):
+        emit_error("invalid_input", f"--date must be an exact YYYY-MM-DD date, got: {value}", exit_code=EXIT_USAGE)
+    try:
+        return date.fromisoformat(normalized).isoformat()
+    except ValueError:
+        emit_error("invalid_input", f"Invalid pickup date: {value}", exit_code=EXIT_USAGE)
+
+
+def _validate_comment_text(comment_text):
+    """Validate exact comment text without silently trimming it."""
+    comment_text = "" if comment_text is None else comment_text
+    if comment_text == "" or not comment_text.strip():
+        emit_error("invalid_input", "--comment must not be empty.", exit_code=EXIT_USAGE)
+    if comment_text != comment_text.strip():
+        emit_error("invalid_input", "--comment must not start or end with whitespace.", exit_code=EXIT_USAGE)
+    return comment_text
 
 
 def _filter_children(results, firstname):
@@ -391,6 +416,20 @@ def main():
     news_parser.add_argument("--child", help="Switch to this child's context before fetching")
     meeting_parser = subparsers.add_parser("meeting", parents=[_global_flags], help="Fetch meeting slot availabilities for a child")
     meeting_parser.add_argument("--child", help="Switch to this child's context before fetching")
+    pickup_parser = subparsers.add_parser("comment", parents=[_global_flags],
+        help="Read, preview, or apply a time registration comment for one date",
+        epilog="""examples:
+  deformentor comment --child Felix --date 2026-06-05
+  deformentor comment --child Felix --date 2026-06-06 --comment \"Hämtas av morfar\"
+  deformentor comment --child Felix --date 2026-06-05 --comment \"Hämtas av morfar\" --apply --confirm""",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    pickup_parser.add_argument("--child", required=True, help="Switch to this child's context before reading or writing")
+    pickup_parser.add_argument("--date", required=True, help="Comment date in exact YYYY-MM-DD format")
+    pickup_parser.add_argument("--comment", help="Exact comment text to preview or write")
+    pickup_parser.add_argument("--apply", action="store_true", help="Actually write the comment after all safety checks pass")
+    pickup_parser.add_argument("--confirm", action="store_true", help="Required together with --apply to allow writing")
+    pickup_parser.add_argument("--overwrite-existing", action="store_true", help="Required when replacing an existing non-empty comment")
+    pickup_parser.add_argument("--destination-log", help="Optional JSONL log path to append after a verified write")
     att2_parser = subparsers.add_parser("attachment", parents=[_global_flags],
         help="Fetch an attachment and write bytes to stdout",
         epilog="""examples:
@@ -430,6 +469,8 @@ def main():
             _news(args)
         elif args.command == "meeting":
             _meeting(args)
+        elif args.command == "comment":
+            _pickup_comment(args)
         elif args.command == "attachment":
             _attachment(args)
         elif args.command == "status":
@@ -495,6 +536,112 @@ def _get_session(quiet=False):
     if not personnummer:
         emit_error("not_configured", "PERSONNUMMER not set. Run: deformentor setup", exit_code=EXIT_AUTH)
     return login(personnummer, session_path=str(SESSION_FILE), quiet=quiet)
+
+
+def _append_destination_log(path, entry):
+    """Append a JSONL destination log entry."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
+def _pickup_comment(args):
+    session = _get_session(quiet=args.quiet)
+    pickup_date = _validate_exact_pickup_date(args.date)
+    _resolve_and_switch_child(session, args.child)
+    registration = None
+
+    try:
+        registration = get_time_registration_for_date(session, pickup_date)
+    except RuntimeError as exc:
+        emit_error("not_found", f"No time registration found for child '{args.child}' on {pickup_date}: {exc}", exit_code=EXIT_NOT_FOUND)
+
+    raw_comments = get_time_registration_comments(session, pickup_date)
+    existing_comment = normalize_time_registration_comment(raw_comments)
+
+    proposed_comment = _validate_comment_text(args.comment) if args.comment is not None else None
+    has_existing = existing_comment.get("found", False)
+    existing_text = existing_comment.get("userComment") if has_existing else None
+    existing_differs = bool(proposed_comment and has_existing and existing_text != proposed_comment)
+    blocked = existing_differs
+
+    result = {
+        "child": args.child,
+        "child_id": registration.get("pupilId") or registration.get("childId"),
+        "date": pickup_date,
+        "date_input": args.date,
+        "mode": "apply" if args.apply else "preview",
+        "time_registration": {
+            "timeRegistrationId": registration.get("timeRegistrationId"),
+            "found": True,
+        },
+        "existing_comment": existing_comment,
+        "proposed_comment": proposed_comment,
+        "write_performed": False,
+        "would_write_if_applied": bool(proposed_comment and not existing_differs),
+        "blocked": blocked,
+    }
+    if blocked:
+        result["block_reason"] = "existing_comment_requires_overwrite_confirmation"
+
+    if not args.apply:
+        _output_json(result, args)
+        return
+
+    if proposed_comment is None:
+        emit_error("invalid_input", "--apply requires --comment.", exit_code=EXIT_USAGE)
+    if not args.confirm:
+        emit_error("invalid_input", "--apply requires --confirm.", exit_code=EXIT_USAGE)
+    if existing_differs and not args.overwrite_existing:
+        emit_error("invalid_input", "Existing comment differs; rerun with --overwrite-existing to replace it.", exit_code=EXIT_USAGE)
+
+    if has_existing and existing_text == proposed_comment:
+        result["verified"] = True
+        result["blocked"] = False
+        result["would_write_if_applied"] = False
+        _output_json(result, args)
+        return
+
+    comment_id = existing_comment.get("parentCommentId", 0) if has_existing else 0
+    save_time_registration_comment(session, comment_id, proposed_comment, registration.get("timeRegistrationId"))
+    verified_raw_comments = get_time_registration_comments(session, pickup_date)
+    verified_comment = normalize_time_registration_comment(verified_raw_comments)
+    if not verified_comment.get("found") or verified_comment.get("userComment") != proposed_comment:
+        emit_error("verification_failed", f"Comment save could not be verified for {pickup_date}.", exit_code=EXIT_ERROR)
+
+    result.update({
+        "existing_comment": verified_comment,
+        "write_performed": True,
+        "would_write_if_applied": False,
+        "blocked": False,
+        "verified": True,
+        "written_comment": proposed_comment,
+        "previous_comment": existing_text,
+        "previous_owner": existing_comment.get("owner") if has_existing else None,
+    })
+    result.pop("block_reason", None)
+
+    if args.destination_log:
+        log_entry = {
+            "ts": datetime.now().astimezone().isoformat(),
+            "destination": "informentor",
+            "action": "time_registration_comment_saved",
+            "child": args.child,
+            "child_id": result.get("child_id"),
+            "date": pickup_date,
+            "comment": proposed_comment,
+            "previous_comment": existing_text,
+            "previous_owner": existing_comment.get("owner") if has_existing else None,
+            "verified": True,
+            "tool": "deformentor-cli",
+        }
+        try:
+            _append_destination_log(args.destination_log, log_entry)
+        except OSError as exc:
+            emit_error("destination_log_failed", f"InfoMentor write was verified, but destination log append failed: {exc}", exit_code=EXIT_ERROR)
+        result["destination_log"] = {"written": True, "path": args.destination_log}
+
+    _output_json(result, args)
 
 
 def _notifications(args):
@@ -619,3 +766,7 @@ def _reset(args):
     print(json.dumps({"reset": True, "deleted": deleted, "failed": failed}))
     if failed:
         sys.exit(EXIT_ERROR)
+
+
+if __name__ == "__main__":
+    main()
