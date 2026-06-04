@@ -30,3 +30,5 @@ _temp_inbox/
 .playwright-mcp/
 .claude/
 CLAUDE.local.md
+docs/plans/
+.hermes/plans/
