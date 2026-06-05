@@ -142,6 +142,7 @@ dependencies = [
     { name = "platformdirs" },
     { name = "python-dotenv" },
     { name = "requests" },
+    { name = "stockholm-freja" },
 ]
 
 [package.optional-dependencies]
@@ -160,6 +161,7 @@ requires-dist = [
     { name = "platformdirs", specifier = ">=4.0.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "requests", specifier = ">=2.31.0" },
+    { name = "stockholm-freja", directory = "../stockholm-freja" },
 ]
 provides-extras = ["completion"]
 
@@ -273,6 +275,20 @@ sdist = { url = "https://files.pythonhosted.org/packages/34/64/8860370b167a9721e
 wheels = [
     { url = "https://files.pythonhosted.org/packages/56/5d/c814546c2333ceea4ba42262d8c4d55763003e767fa169adc693bd524478/requests-2.33.0-py3-none-any.whl", hash = "sha256:3324635456fa185245e24865e810cecec7b4caf933d7eb133dcde67d48cee69b", size = 65017, upload-time = "2026-03-25T15:10:40.382Z" },
 ]
+
+[[package]]
+name = "stockholm-freja"
+version = "0.1.0"
+source = { directory = "../stockholm-freja" }
+dependencies = [
+    { name = "requests" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "requests", specifier = ">=2.31.0" }]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=9.0.2" }]
 
 [[package]]
 name = "tomli"

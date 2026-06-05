@@ -18,8 +18,8 @@ except ImportError:
     _HAS_ARGCOMPLETE = False
 
 from deformentor_cli.errors import (
-    AuthenticationError, FrejaError, UpstreamStateError, emit_error, EXIT_AUTH,
-    EXIT_ERROR, EXIT_NETWORK, EXIT_NOT_FOUND, EXIT_USAGE,
+    AuthenticationError, FrejaError, FrejaHttpError, UpstreamStateError, emit_error,
+    EXIT_AUTH, EXIT_ERROR, EXIT_NETWORK, EXIT_NOT_FOUND, EXIT_USAGE,
 )
 from deformentor_cli.api import (
     fetch_all_notifications, fetch_all_messages, get_attachment, get_attendance_detail,
@@ -593,6 +593,11 @@ safety:
         emit_error("interrupted", "Interrupted by user.", exit_code=130)
     except AuthenticationError:
         emit_error("auth_failed", "InfoMentor authentication failed.", exit_code=EXIT_AUTH)
+    except FrejaHttpError as e:
+        status_code = getattr(e, "status_code", None)
+        if status_code is not None and status_code >= 500:
+            emit_error("server_error", f"Freja returned HTTP status {status_code}.", exit_code=EXIT_NETWORK)
+        emit_error("auth_failed", f"Freja authentication failed: {e}", exit_code=EXIT_AUTH)
     except FrejaError as e:
         emit_error("auth_failed", f"Freja authentication failed: {e}", exit_code=EXIT_AUTH)
     except UpstreamStateError as e:

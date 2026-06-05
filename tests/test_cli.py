@@ -1464,6 +1464,21 @@ class TestMainExceptionHandling:
         assert exc_info.value.code == expected_exit
         assert "secret upstream response" not in capsys.readouterr().err
 
+    def test_maps_freja_server_error_to_network_exit(self, monkeypatch, capsys):
+        import deformentor_cli.cli as cli
+        from deformentor_cli.errors import FrejaHttpError
+
+        monkeypatch.setattr("sys.argv", ["deformentor", "status"])
+        monkeypatch.setattr(cli, "_status", MagicMock(side_effect=FrejaHttpError("secret", status_code=500)))
+
+        with pytest.raises(SystemExit) as exc_info:
+            cli.main()
+
+        assert exc_info.value.code == 5
+        output = capsys.readouterr().err
+        assert json.loads(output)["error"] == "server_error"
+        assert "secret" not in output
+
     def test_keyboard_interrupt_is_structured(self, monkeypatch, capsys):
         import deformentor_cli.cli as cli
         monkeypatch.setattr("sys.argv", ["deformentor", "status"])

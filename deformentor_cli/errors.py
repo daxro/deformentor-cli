@@ -1,6 +1,15 @@
 import json
 import sys
 
+from stockholm_freja import (
+    FrejaError,
+    FrejaHttpError,
+    FrejaInputError,
+    FrejaRedirectError,
+    FrejaRejectedError,
+    FrejaTimeoutError,
+)
+
 
 EXIT_ERROR = 1
 EXIT_USAGE = 2
@@ -9,24 +18,12 @@ EXIT_NOT_FOUND = 4
 EXIT_NETWORK = 5
 
 
-class FrejaError(Exception):
-    """Base error for Freja eID+ authentication."""
-
-
 class AuthenticationError(Exception):
     """Authentication failed outside the Freja approval step."""
 
 
 class UpstreamStateError(Exception):
     """An upstream operation completed without the expected state change."""
-
-
-class FrejaTimeoutError(FrejaError):
-    """Authentication timed out or expired."""
-
-
-class FrejaRejectedError(FrejaError):
-    """User rejected the authentication in the Freja app."""
 
 
 def emit_error(code, message, exit_code=EXIT_ERROR):

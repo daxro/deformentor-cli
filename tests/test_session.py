@@ -367,7 +367,9 @@ class TestLogin:
             session,
             "https://login003.stockholm.se/NECSadcfreja/authenticate/NECSadcfreja?TYPE=1&TARGET=x",
             "0000000000",
+            on_started=mock_freja.call_args.kwargs["on_started"],
         )
+        assert callable(mock_freja.call_args.kwargs["on_started"])
 
     @patch("deformentor_cli.session.freja_login")
     def test_login_verifies_authentication(self, mock_freja):
@@ -408,17 +410,19 @@ class TestLogin:
 class TestLoginQuiet:
     @patch("deformentor_cli.session.freja_login")
     def test_login_prints_progress_by_default(self, mock_freja, capsys):
+        mock_freja.side_effect = lambda *args, **kwargs: kwargs["on_started"]()
         session = TestLogin()._build_mock_session()
         login("0000000000", _session=session)
         captured = capsys.readouterr()
-        assert "logging in" in captured.err.lower()
+        assert "approve the login in freja" in captured.err.lower()
 
     @patch("deformentor_cli.session.freja_login")
     def test_login_keeps_human_approval_prompt_when_quiet(self, mock_freja, capsys):
+        mock_freja.side_effect = lambda *args, **kwargs: kwargs["on_started"]()
         session = TestLogin()._build_mock_session()
         login("0000000000", _session=session, quiet=True)
         captured = capsys.readouterr()
-        assert "approve in freja" in captured.err.lower()
+        assert "approve the login in freja" in captured.err.lower()
 
 
 class TestSessionPersistence:

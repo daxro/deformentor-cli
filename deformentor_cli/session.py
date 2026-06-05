@@ -170,8 +170,6 @@ def login(personnummer, _session=None, session_path=None, quiet=False):
             else:
                 raise
 
-    print("Logging in - approve in Freja on your phone...", file=sys.stderr)
-
     # Step 1: Get oauth_token from hub
     resp = session.get(validate_auth_url("https://hub.infomentor.se/"), allow_redirects=False, timeout=HTTP_TIMEOUT)
     resp = follow_redirects(session, resp)
@@ -202,7 +200,12 @@ def login(personnummer, _session=None, session_path=None, quiet=False):
     freja_page_url = validate_auth_url(resp.url)
 
     # Step 5: Freja login (poll until phone approval)
-    freja_login(session, freja_page_url, personnummer)
+    freja_login(
+        session,
+        freja_page_url,
+        personnummer,
+        on_started=lambda: print("Approve the login in Freja eID+.", file=sys.stderr, flush=True),
+    )
 
     # Step 6: Reload Freja page to get SAML response
     resp = session.get(freja_page_url, allow_redirects=False, timeout=HTTP_TIMEOUT)
