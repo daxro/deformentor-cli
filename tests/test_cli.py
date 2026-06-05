@@ -1,8 +1,12 @@
 import io
 import json
+import os
+import subprocess
+import sys
 from datetime import date, timedelta
 
 import pytest
+import requests
 from unittest.mock import patch, MagicMock
 
 
@@ -12,14 +16,14 @@ class TestGetSession:
     def test_returns_authenticated_session(self, mock_dotenv, mock_login):
         from deformentor_cli.cli import _get_session, SESSION_FILE
 
-        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_dotenv.return_value = {"PERSONNUMMER": "000000000000"}
         mock_session = MagicMock()
         mock_login.return_value = mock_session
 
         result = _get_session()
 
         assert result is mock_session
-        mock_login.assert_called_once_with("200001011234", session_path=str(SESSION_FILE), quiet=False)
+        mock_login.assert_called_once_with("000000000000", session_path=str(SESSION_FILE), quiet=False)
 
     @patch("deformentor_cli.cli.dotenv_values")
     def test_exits_on_missing_personnummer(self, mock_dotenv, capsys):
@@ -31,17 +35,29 @@ class TestGetSession:
             _get_session()
         assert exc_info.value.code == 3
 
+    @patch("deformentor_cli.cli.login")
+    @patch("deformentor_cli.cli.dotenv_values")
+    def test_rejects_invalid_stored_personnummer_before_login(self, mock_dotenv, mock_login):
+        from deformentor_cli.cli import _get_session
+        mock_dotenv.return_value = {"PERSONNUMMER": "invalid"}
+
+        with pytest.raises(SystemExit) as exc_info:
+            _get_session()
+
+        assert exc_info.value.code == 2
+        mock_login.assert_not_called()
+
 
 class TestGetSessionQuiet:
     @patch("deformentor_cli.cli.login")
     @patch("deformentor_cli.cli.dotenv_values")
     def test_passes_quiet_to_login(self, mock_dotenv, mock_login):
         from deformentor_cli.cli import _get_session, SESSION_FILE
-        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_dotenv.return_value = {"PERSONNUMMER": "000000000000"}
         mock_session = MagicMock()
         mock_login.return_value = mock_session
         _get_session(quiet=True)
-        mock_login.assert_called_once_with("200001011234", session_path=str(SESSION_FILE), quiet=True)
+        mock_login.assert_called_once_with("000000000000", session_path=str(SESSION_FILE), quiet=True)
 
 
 class TestValidateDateFlag:
@@ -75,6 +91,12 @@ class TestValidateDateFlag:
         from deformentor_cli.cli import _validate_date_flag
         with pytest.raises(SystemExit):
             _validate_date_flag("2026-03-28T12:00:00", "--since")
+
+    def test_invalid_calendar_date_exits(self):
+        from deformentor_cli.cli import _validate_date_flag
+        with pytest.raises(SystemExit) as exc_info:
+            _validate_date_flag("2026-02-30", "--since")
+        assert exc_info.value.code == 2
 
     def test_error_message_includes_flag_name(self, capsys):
         from deformentor_cli.cli import _validate_date_flag
@@ -172,7 +194,7 @@ class TestPickupCommentFormatting:
 
     def test_keeps_special_characters_in_plain_comment(self):
         from deformentor_cli.cli import _validate_comment_text
-        assert _validate_comment_text("Anna-Lena Åström") == "Anna-Lena Åström"
+        assert _validate_comment_text("Example åäö") == "Example åäö"
 
     def test_empty_text_exits(self):
         from deformentor_cli.cli import _validate_comment_text
@@ -186,35 +208,35 @@ class TestPickupCommentFormatting:
 
     def test_keeps_leading_whitespace(self):
         from deformentor_cli.cli import _validate_comment_text
-        assert _validate_comment_text(" Julia Welles") == " Julia Welles"
+        assert _validate_comment_text(" Example Guardian") == " Example Guardian"
 
     def test_keeps_trailing_whitespace(self):
         from deformentor_cli.cli import _validate_comment_text
-        assert _validate_comment_text("Julia Welles ") == "Julia Welles "
+        assert _validate_comment_text("Example Guardian ") == "Example Guardian "
 
 
 class TestFilterChildren:
     def test_matches_firstname_case_insensitive(self):
         from deformentor_cli.cli import _filter_children
         data = [
-            {"child": "Andersson, Astrid", "child_id": "1"},
-            {"child": "Andersson, Nils", "child_id": "2"},
+            {"child": "Example, Student A", "child_id": "1"},
+            {"child": "Example, Student B", "child_id": "2"},
         ]
-        result = _filter_children(data, "astrid")
+        result = _filter_children(data, "student a")
         assert len(result) == 1
         assert result[0]["child_id"] == "1"
 
     def test_no_match_returns_empty(self):
         from deformentor_cli.cli import _filter_children
-        data = [{"child": "Andersson, Astrid", "child_id": "1"}]
+        data = [{"child": "Example, Student A", "child_id": "1"}]
         result = _filter_children(data, "unknown")
         assert result == []
 
     def test_none_returns_all(self):
         from deformentor_cli.cli import _filter_children
         data = [
-            {"child": "Andersson, Astrid", "child_id": "1"},
-            {"child": "Andersson, Nils", "child_id": "2"},
+            {"child": "Example, Student A", "child_id": "1"},
+            {"child": "Example, Student B", "child_id": "2"},
         ]
         result = _filter_children(data, None)
         assert len(result) == 2
@@ -329,11 +351,11 @@ class TestNotificationsCommand:
     @patch("deformentor_cli.cli.dotenv_values")
     def test_applies_all_filters(self, mock_dotenv, mock_login, mock_fetch, capsys):
         from deformentor_cli.cli import _notifications
-        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_dotenv.return_value = {"PERSONNUMMER": "000000000000"}
         mock_login.return_value = MagicMock()
         mock_fetch.return_value = [
             {
-                "child": "Andersson, Astrid",
+                "child": "Example, Student A",
                 "child_id": "1",
                 "notifications": [
                     {"date": "2026-03-30T06:07:04", "type": {"name": "attendance", "id": "1", "action": "X", "title": "Y"}},
@@ -342,7 +364,7 @@ class TestNotificationsCommand:
                 ],
             },
             {
-                "child": "Andersson, Nils",
+                "child": "Example, Student B",
                 "child_id": "2",
                 "notifications": [
                     {"date": "2026-03-30T06:07:04", "type": {"name": "attendance", "id": "4", "action": "X", "title": "Y"}},
@@ -350,7 +372,7 @@ class TestNotificationsCommand:
             },
         ]
         args = MagicMock()
-        args.child = "Astrid"
+        args.child = "Student A"
         args.type = "attendance"
         args.since = "2026-03-15"
         args.until = None
@@ -358,7 +380,7 @@ class TestNotificationsCommand:
         captured = capsys.readouterr()
         output = json.loads(captured.out)
         assert len(output) == 1
-        assert output[0]["child"] == "Andersson, Astrid"
+        assert output[0]["child"] == "Example, Student A"
         assert len(output[0]["notifications"]) == 1
         assert output[0]["notifications"][0]["type"]["id"] == "1"
 
@@ -366,27 +388,29 @@ class TestNotificationsCommand:
     @patch("deformentor_cli.cli.fetch_all_notifications")
     @patch("deformentor_cli.cli.login")
     @patch("deformentor_cli.cli.dotenv_values")
-    def test_warns_on_unknown_type(self, mock_dotenv, mock_login, mock_fetch, mock_date, capsys):
+    def test_rejects_unknown_type(self, mock_dotenv, mock_login, mock_fetch, mock_date, capsys):
         from deformentor_cli.cli import _notifications
         mock_date.today.return_value = date(2026, 3, 30)
         mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
-        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_dotenv.return_value = {"PERSONNUMMER": "000000000000"}
         mock_login.return_value = MagicMock()
         mock_fetch.return_value = [
-            {"child": "Andersson, Astrid", "child_id": "1", "notifications": []},
+            {"child": "Example, Student A", "child_id": "1", "notifications": []},
         ]
         args = MagicMock()
         args.child = None
         args.type = "bogus"
         args.since = None
         args.until = None
-        _notifications(args)
-        captured = capsys.readouterr()
-        assert "not a known type" in captured.err.lower()
+        with pytest.raises(SystemExit) as exc_info:
+            _notifications(args)
+        assert exc_info.value.code == 2
+        assert "unknown notification type" in capsys.readouterr().err.lower()
+        mock_login.assert_not_called()
 
     @patch("deformentor_cli.cli._get_session")
     @patch("deformentor_cli.cli.dotenv_values")
-    def test_warns_on_unknown_type_before_auth(self, mock_dotenv, mock_session, capsys):
+    def test_rejects_unknown_type_before_auth(self, mock_dotenv, mock_session, capsys):
         from deformentor_cli.cli import _notifications
         mock_dotenv.return_value = {}
         mock_session.side_effect = SystemExit(3)
@@ -395,10 +419,11 @@ class TestNotificationsCommand:
         args.type = "bogus"
         args.since = None
         args.until = None
-        with pytest.raises(SystemExit):
+        with pytest.raises(SystemExit) as exc_info:
             _notifications(args)
-        captured = capsys.readouterr()
-        assert "not a known type" in captured.err.lower()
+        assert exc_info.value.code == 2
+        assert "unknown notification type" in capsys.readouterr().err.lower()
+        mock_session.assert_not_called()
 
     @patch("deformentor_cli.cli.dotenv_values")
     def test_exits_when_since_after_until(self, mock_dotenv):
@@ -423,11 +448,11 @@ class TestMessagesCommand:
 
         mock_date.today.return_value = date(2026, 3, 30)
         mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
-        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_dotenv.return_value = {"PERSONNUMMER": "000000000000"}
         mock_login.return_value = MagicMock()
         mock_fetch.return_value = [
             {
-                "child": "Andersson, Astrid",
+                "child": "Example, Student A",
                 "child_id": "5001001",
                 "messages": [
                     {"id": "100", "subject": "Hej", "date": "2026-03-28"},
@@ -444,7 +469,7 @@ class TestMessagesCommand:
         captured = capsys.readouterr()
         output = json.loads(captured.out)
         assert len(output) == 1
-        assert output[0]["child"] == "Andersson, Astrid"
+        assert output[0]["child"] == "Example, Student A"
         assert len(output[0]["messages"]) == 1
 
     @patch("deformentor_cli.cli.fetch_all_messages")
@@ -453,11 +478,11 @@ class TestMessagesCommand:
     def test_applies_child_and_since_filters(self, mock_dotenv, mock_login, mock_fetch, capsys):
         from deformentor_cli.cli import _messages
 
-        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_dotenv.return_value = {"PERSONNUMMER": "000000000000"}
         mock_login.return_value = MagicMock()
         mock_fetch.return_value = [
             {
-                "child": "Andersson, Astrid",
+                "child": "Example, Student A",
                 "child_id": "1",
                 "messages": [
                     {"id": "1", "subject": "New", "date": "2026-03-30"},
@@ -465,16 +490,16 @@ class TestMessagesCommand:
                 ],
             },
             {
-                "child": "Andersson, Nils",
+                "child": "Example, Student B",
                 "child_id": "2",
                 "messages": [
-                    {"id": "3", "subject": "Nils msg", "date": "2026-03-30"},
+                    {"id": "3", "subject": "Student B msg", "date": "2026-03-30"},
                 ],
             },
         ]
 
         args = MagicMock()
-        args.child = "Astrid"
+        args.child = "Student A"
         args.since = "2026-03-15"
         args.until = None
         _messages(args)
@@ -482,7 +507,7 @@ class TestMessagesCommand:
         captured = capsys.readouterr()
         output = json.loads(captured.out)
         assert len(output) == 1
-        assert output[0]["child"] == "Andersson, Astrid"
+        assert output[0]["child"] == "Example, Student A"
         assert len(output[0]["messages"]) == 1
         assert output[0]["messages"][0]["subject"] == "New"
 
@@ -490,25 +515,25 @@ class TestMessagesCommand:
     @patch("deformentor_cli.cli.fetch_all_messages")
     @patch("deformentor_cli.cli.login")
     @patch("deformentor_cli.cli.dotenv_values")
-    def test_warns_when_child_filter_matches_nothing(self, mock_dotenv, mock_login, mock_fetch, mock_date, capsys):
+    def test_exits_when_child_filter_matches_nothing(self, mock_dotenv, mock_login, mock_fetch, mock_date, capsys):
         from deformentor_cli.cli import _messages
 
         mock_date.today.return_value = date(2026, 3, 30)
         mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
-        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_dotenv.return_value = {"PERSONNUMMER": "000000000000"}
         mock_login.return_value = MagicMock()
         mock_fetch.return_value = [
-            {"child": "Andersson, Astrid", "child_id": "1", "messages": []},
+            {"child": "Example, Student A", "child_id": "1", "messages": []},
         ]
 
         args = MagicMock()
         args.child = "Unknown"
         args.since = None
         args.until = None
-        _messages(args)
-
-        captured = capsys.readouterr()
-        assert "no child matching" in captured.err.lower()
+        with pytest.raises(SystemExit) as exc_info:
+            _messages(args)
+        assert exc_info.value.code == 4
+        assert "no child matching" in capsys.readouterr().err.lower()
 
     @patch("deformentor_cli.cli.dotenv_values")
     def test_exits_when_since_after_until(self, mock_dotenv):
@@ -525,14 +550,14 @@ class TestMessagesCommand:
     @patch("deformentor_cli.cli.fetch_all_messages")
     @patch("deformentor_cli.cli.login")
     @patch("deformentor_cli.cli.dotenv_values")
-    def test_warns_when_max_pages_without_all_pages(self, mock_dotenv, mock_login, mock_fetch, mock_date, capsys):
+    def test_rejects_max_pages_without_all_pages(self, mock_dotenv, mock_login, mock_fetch, mock_date, capsys):
         from deformentor_cli.cli import _messages
         mock_date.today.return_value = date(2026, 3, 30)
         mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
-        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_dotenv.return_value = {"PERSONNUMMER": "000000000000"}
         mock_login.return_value = MagicMock()
         mock_fetch.return_value = [
-            {"child": "Andersson, Astrid", "child_id": "1", "messages": []},
+            {"child": "Example, Student A", "child_id": "1", "messages": []},
         ]
         args = MagicMock()
         args.child = None
@@ -540,9 +565,24 @@ class TestMessagesCommand:
         args.until = None
         args.all_pages = False
         args.max_pages = 10
-        _messages(args)
-        captured = capsys.readouterr()
-        assert "--max-pages has no effect without --all-pages" in captured.err
+        with pytest.raises(SystemExit) as exc_info:
+            _messages(args)
+        assert exc_info.value.code == 2
+        assert "--max-pages requires --all-pages" in capsys.readouterr().err
+        mock_login.assert_not_called()
+
+    @patch("deformentor_cli.cli._get_session")
+    @patch("deformentor_cli.cli.dotenv_values")
+    def test_rejects_non_positive_max_pages_before_auth(self, mock_dotenv, mock_session):
+        from deformentor_cli.cli import _messages
+        mock_dotenv.return_value = {}
+        args = MagicMock(child=None, since=None, until=None, all_pages=True, max_pages=0)
+
+        with pytest.raises(SystemExit) as exc_info:
+            _messages(args)
+
+        assert exc_info.value.code == 2
+        mock_session.assert_not_called()
 
 
 class TestResolveAndSwitchChild:
@@ -551,18 +591,18 @@ class TestResolveAndSwitchChild:
     def test_switches_to_matching_child(self, mock_children, mock_switch):
         from deformentor_cli.cli import _resolve_and_switch_child
         mock_children.return_value = [
-            {"name": "Andersson, Astrid", "id": "5001001", "hybridMappingId": "m1", "selected": True},
-            {"name": "Andersson, Nils", "id": "5002002", "hybridMappingId": "m2", "selected": False},
+            {"name": "Example, Student A", "id": "5001001", "hybridMappingId": "m1", "selected": True},
+            {"name": "Example, Student B", "id": "5002002", "hybridMappingId": "m2", "selected": False},
         ]
         session = MagicMock()
-        _resolve_and_switch_child(session, "Astrid")
+        _resolve_and_switch_child(session, "Student A")
         mock_switch.assert_called_once_with(session, "5001001")
 
     @patch("deformentor_cli.cli.get_children")
     def test_exits_on_no_match(self, mock_children, capsys):
         from deformentor_cli.cli import _resolve_and_switch_child
         mock_children.return_value = [
-            {"name": "Andersson, Astrid", "id": "5001001", "hybridMappingId": "m1", "selected": True},
+            {"name": "Example, Student A", "id": "5001001", "hybridMappingId": "m1", "selected": True},
         ]
         session = MagicMock()
         with pytest.raises(SystemExit) as exc_info:
@@ -574,37 +614,51 @@ class TestResolveAndSwitchChild:
     def test_case_insensitive(self, mock_children, mock_switch):
         from deformentor_cli.cli import _resolve_and_switch_child
         mock_children.return_value = [
-            {"name": "Andersson, Astrid", "id": "5001001", "hybridMappingId": "m1", "selected": True},
+            {"name": "Example, Student A", "id": "5001001", "hybridMappingId": "m1", "selected": True},
         ]
         session = MagicMock()
-        _resolve_and_switch_child(session, "astrid")
+        _resolve_and_switch_child(session, "student a")
         mock_switch.assert_called_once_with(session, "5001001")
 
     @patch("deformentor_cli.cli.switch_child")
     @patch("deformentor_cli.cli.get_children")
-    def test_warns_on_multiple_matches(self, mock_children, mock_switch, capsys):
+    def test_exact_match_wins_over_multiple_substrings(self, mock_children, mock_switch, capsys):
         from deformentor_cli.cli import _resolve_and_switch_child
         mock_children.return_value = [
-            {"name": "Andersson, Astrid", "id": "5001001", "hybridMappingId": "m1", "selected": True},
-            {"name": "Andersson, Astrid Jr", "id": "9999", "hybridMappingId": "m3", "selected": False},
+            {"name": "Example, Student A", "id": "5001001", "hybridMappingId": "m1", "selected": True},
+            {"name": "Example, Student A Jr", "id": "9999", "hybridMappingId": "m3", "selected": False},
         ]
         session = MagicMock()
-        _resolve_and_switch_child(session, "Astrid")
-        captured = capsys.readouterr()
-        assert "multiple children match" in captured.err.lower()
+        _resolve_and_switch_child(session, "Student A")
+        assert capsys.readouterr().err == ""
         mock_switch.assert_called_once_with(session, "5001001")
 
     @patch("deformentor_cli.cli.switch_child")
     @patch("deformentor_cli.cli.get_children")
-    def test_requires_unique_match_when_requested(self, mock_children, mock_switch, capsys):
+    def test_ambiguous_read_context_exits(self, mock_children, mock_switch):
         from deformentor_cli.cli import _resolve_and_switch_child
         mock_children.return_value = [
-            {"name": "Andersson, Astrid", "id": "5001001", "hybridMappingId": "m1", "selected": True},
-            {"name": "Andersson, Astrid Jr", "id": "9999", "hybridMappingId": "m3", "selected": False},
+            {"name": "Example, Student A", "id": "5001001"},
+            {"name": "Example, Student A Jr", "id": "9999"},
+        ]
+
+        with pytest.raises(SystemExit) as exc_info:
+            _resolve_and_switch_child(MagicMock(), "Student")
+
+        assert exc_info.value.code == 2
+        mock_switch.assert_not_called()
+
+    @patch("deformentor_cli.cli.switch_child")
+    @patch("deformentor_cli.cli.get_children")
+    def test_ambiguous_substring_requires_unique_match(self, mock_children, mock_switch, capsys):
+        from deformentor_cli.cli import _resolve_and_switch_child
+        mock_children.return_value = [
+            {"name": "Example, Student A", "id": "5001001", "hybridMappingId": "m1", "selected": True},
+            {"name": "Example, Student A Jr", "id": "9999", "hybridMappingId": "m3", "selected": False},
         ]
         session = MagicMock()
         with pytest.raises(SystemExit) as exc_info:
-            _resolve_and_switch_child(session, "Astr", require_unique=True)
+            _resolve_and_switch_child(session, "Student")
         assert exc_info.value.code == 2
         err = json.loads(capsys.readouterr().err)
         assert "matches multiple children" in err["message"]
@@ -612,14 +666,14 @@ class TestResolveAndSwitchChild:
 
     @patch("deformentor_cli.cli.switch_child")
     @patch("deformentor_cli.cli.get_children")
-    def test_unique_mode_allows_single_exact_firstname_among_multiple_substrings(self, mock_children, mock_switch):
+    def test_exact_firstname_wins_among_multiple_substrings(self, mock_children, mock_switch):
         from deformentor_cli.cli import _resolve_and_switch_child
         mock_children.return_value = [
-            {"name": "Andersson, Astrid", "id": "5001001", "hybridMappingId": "m1", "selected": True},
-            {"name": "Andersson, Astrid Jr", "id": "9999", "hybridMappingId": "m3", "selected": False},
+            {"name": "Example, Student A", "id": "5001001", "hybridMappingId": "m1", "selected": True},
+            {"name": "Example, Student A Jr", "id": "9999", "hybridMappingId": "m3", "selected": False},
         ]
         session = MagicMock()
-        _resolve_and_switch_child(session, "Astrid", require_unique=True)
+        _resolve_and_switch_child(session, "Student A")
         mock_switch.assert_called_once_with(session, "5001001")
 
 
@@ -629,7 +683,7 @@ class TestAttendanceCommand:
     @patch("deformentor_cli.cli.dotenv_values")
     def test_outputs_json_to_stdout(self, mock_dotenv, mock_login, mock_fetch, capsys):
         from deformentor_cli.cli import _attendance
-        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_dotenv.return_value = {"PERSONNUMMER": "000000000000"}
         mock_login.return_value = MagicMock()
         mock_fetch.return_value = {"id": "197608", "status": "Approved"}
         args = MagicMock()
@@ -646,24 +700,32 @@ class TestAttendanceCommand:
     @patch("deformentor_cli.cli.dotenv_values")
     def test_switches_child_when_provided(self, mock_dotenv, mock_login, mock_fetch, mock_switch, capsys):
         from deformentor_cli.cli import _attendance
-        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_dotenv.return_value = {"PERSONNUMMER": "000000000000"}
         mock_login.return_value = MagicMock()
         mock_fetch.return_value = {"id": "197608"}
         args = MagicMock()
         args.id = "197608"
-        args.child = "Astrid"
+        args.child = "Student A"
         _attendance(args)
-        mock_switch.assert_called_once_with(mock_login.return_value, "Astrid")
+        mock_switch.assert_called_once_with(mock_login.return_value, "Student A")
 
 
-class TestMaskPersonnummer:
-    def test_masks_12_digit(self):
-        from deformentor_cli.cli import _mask_personnummer
-        assert _mask_personnummer("200001011234") == "0001****1234"
+class TestValidatePersonnummer:
+    def test_accepts_12_digits(self):
+        from deformentor_cli.cli import _validate_personnummer
+        assert _validate_personnummer("000000000000") == "000000000000"
 
-    def test_short_input_returns_as_is(self):
-        from deformentor_cli.cli import _mask_personnummer
-        assert _mask_personnummer("87032") == "87032"
+    def test_rejects_invalid_stored_value_without_echoing_it(self, capsys):
+        from deformentor_cli.cli import _validate_personnummer
+        with pytest.raises(SystemExit) as exc_info:
+            _validate_personnummer("secret-invalid-value", stored=True)
+        assert exc_info.value.code == 2
+        assert "secret-invalid-value" not in capsys.readouterr().err
+
+    def test_rejects_non_ascii_digits(self):
+        from deformentor_cli.cli import _validate_personnummer
+        with pytest.raises(SystemExit):
+            _validate_personnummer("٠٠٠٠٠٠٠٠٠٠٠٠")
 
 
 class TestStatus:
@@ -674,22 +736,22 @@ class TestStatus:
     @patch("deformentor_cli.cli.dotenv_values")
     def test_shows_valid_session_with_children(self, mock_dotenv, mock_load, mock_new_session, mock_verify, mock_children, capsys):
         from deformentor_cli.cli import _status
-        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_dotenv.return_value = {"PERSONNUMMER": "000000000000"}
         mock_session = MagicMock()
         mock_new_session.return_value = mock_session
         mock_load.return_value = True
         mock_children.return_value = [
-            {"name": "Andersson, Astrid", "id": "5001001", "hybridMappingId": "m1", "selected": True},
-            {"name": "Andersson, Nils", "id": "5002002", "hybridMappingId": "m2", "selected": False},
+            {"name": "Example, Student A", "id": "5001001", "hybridMappingId": "m1", "selected": True},
+            {"name": "Example, Student B", "id": "5002002", "hybridMappingId": "m2", "selected": False},
         ]
         args = MagicMock()
         args.json_output = False
         _status(args)
         captured = capsys.readouterr()
-        assert "0001****1234" in captured.out
+        assert "personnummer" not in captured.out.lower()
         assert "valid" in captured.out.lower()
-        assert "Astrid" in captured.out
-        assert "Nils" in captured.out
+        assert "Student A" in captured.out
+        assert "Student B" in captured.out
 
     @patch("deformentor_cli.cli.dotenv_values")
     def test_shows_not_configured(self, mock_dotenv, capsys):
@@ -708,10 +770,11 @@ class TestStatus:
     @patch("deformentor_cli.cli.dotenv_values")
     def test_shows_expired_session(self, mock_dotenv, mock_load, mock_new_session, mock_verify, capsys):
         from deformentor_cli.cli import _status
-        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_dotenv.return_value = {"PERSONNUMMER": "000000000000"}
         mock_new_session.return_value = MagicMock()
         mock_load.return_value = True
-        mock_verify.side_effect = RuntimeError("not authenticated")
+        from deformentor_cli.errors import AuthenticationError
+        mock_verify.side_effect = AuthenticationError("not authenticated")
         args = MagicMock()
         args.json_output = False
         _status(args)
@@ -719,12 +782,28 @@ class TestStatus:
         assert "expired" in captured.out.lower()
         assert "re-authenticate" in captured.out.lower()
 
+    @patch("deformentor_cli.cli.verify_authenticated")
+    @patch("deformentor_cli.cli.new_session")
+    @patch("deformentor_cli.cli.load_session")
+    @patch("deformentor_cli.cli.dotenv_values")
+    def test_http_401_status_probe_propagates(self, mock_dotenv, mock_load, mock_new_session, mock_verify):
+        from deformentor_cli.cli import _get_status
+        response = requests.Response()
+        response.status_code = 401
+        mock_dotenv.return_value = {"PERSONNUMMER": "000000000000"}
+        mock_new_session.return_value = MagicMock()
+        mock_load.return_value = True
+        mock_verify.side_effect = requests.HTTPError(response=response)
+
+        with pytest.raises(requests.HTTPError):
+            _get_status()
+
     @patch("deformentor_cli.cli.new_session")
     @patch("deformentor_cli.cli.load_session")
     @patch("deformentor_cli.cli.dotenv_values")
     def test_shows_no_saved_session(self, mock_dotenv, mock_load, mock_new_session, capsys):
         from deformentor_cli.cli import _status
-        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_dotenv.return_value = {"PERSONNUMMER": "000000000000"}
         mock_new_session.return_value = MagicMock()
         mock_load.return_value = False
         args = MagicMock()
@@ -741,7 +820,7 @@ class TestCalendarCommand:
     @patch("deformentor_cli.cli.dotenv_values")
     def test_outputs_json_to_stdout(self, mock_dotenv, mock_login, mock_fetch, capsys):
         from deformentor_cli.cli import _calendar
-        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_dotenv.return_value = {"PERSONNUMMER": "000000000000"}
         mock_login.return_value = MagicMock()
         mock_fetch.return_value = {"eventId": "12345", "title": "Studiedag"}
         args = MagicMock()
@@ -758,14 +837,14 @@ class TestCalendarCommand:
     @patch("deformentor_cli.cli.dotenv_values")
     def test_switches_child_when_provided(self, mock_dotenv, mock_login, mock_fetch, mock_switch, capsys):
         from deformentor_cli.cli import _calendar
-        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_dotenv.return_value = {"PERSONNUMMER": "000000000000"}
         mock_login.return_value = MagicMock()
         mock_fetch.return_value = {"eventId": "12345"}
         args = MagicMock()
         args.id = "12345"
-        args.child = "Astrid"
+        args.child = "Student A"
         _calendar(args)
-        mock_switch.assert_called_once_with(mock_login.return_value, "Astrid")
+        mock_switch.assert_called_once_with(mock_login.return_value, "Student A")
 
 
 class TestNewsCommand:
@@ -774,7 +853,7 @@ class TestNewsCommand:
     @patch("deformentor_cli.cli.dotenv_values")
     def test_outputs_json_to_stdout(self, mock_dotenv, mock_login, mock_fetch, capsys):
         from deformentor_cli.cli import _news
-        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_dotenv.return_value = {"PERSONNUMMER": "000000000000"}
         mock_login.return_value = MagicMock()
         mock_fetch.return_value = {"id": 1000001, "title": "Veckobrev", "content": "<p>Text</p>", "attachments": []}
         args = MagicMock()
@@ -790,7 +869,7 @@ class TestNewsCommand:
     @patch("deformentor_cli.cli.dotenv_values")
     def test_exits_when_not_found(self, mock_dotenv, mock_login, mock_fetch, capsys):
         from deformentor_cli.cli import _news
-        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_dotenv.return_value = {"PERSONNUMMER": "000000000000"}
         mock_login.return_value = MagicMock()
         mock_fetch.return_value = None
         args = MagicMock()
@@ -810,7 +889,7 @@ class TestNewsCommand:
     @patch("deformentor_cli.cli.dotenv_values")
     def test_exits_with_child_context_message_when_child_provided(self, mock_dotenv, mock_login, mock_fetch, mock_switch, capsys):
         from deformentor_cli.cli import _news
-        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_dotenv.return_value = {"PERSONNUMMER": "000000000000"}
         mock_login.return_value = MagicMock()
         mock_fetch.return_value = None
         args = MagicMock()
@@ -831,14 +910,14 @@ class TestNewsCommand:
     @patch("deformentor_cli.cli.dotenv_values")
     def test_switches_child_when_provided(self, mock_dotenv, mock_login, mock_fetch, mock_switch, capsys):
         from deformentor_cli.cli import _news
-        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_dotenv.return_value = {"PERSONNUMMER": "000000000000"}
         mock_login.return_value = MagicMock()
         mock_fetch.return_value = {"id": 1000001, "title": "Test", "content": "", "attachments": []}
         args = MagicMock()
         args.id = "1000001"
-        args.child = "Astrid"
+        args.child = "Student A"
         _news(args)
-        mock_switch.assert_called_once_with(mock_login.return_value, "Astrid")
+        mock_switch.assert_called_once_with(mock_login.return_value, "Student A")
 
 
 class TestMeetingCommand:
@@ -847,7 +926,7 @@ class TestMeetingCommand:
     @patch("deformentor_cli.cli.dotenv_values")
     def test_outputs_json_to_stdout(self, mock_dotenv, mock_login, mock_fetch, capsys):
         from deformentor_cli.cli import _meeting
-        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_dotenv.return_value = {"PERSONNUMMER": "000000000000"}
         mock_login.return_value = MagicMock()
         mock_fetch.return_value = {"totalCount": 1, "totalPages": 1, "availabilities": [{"availabilityId": 3000001, "meetingType": "Utvecklingssamtal"}]}
         args = MagicMock()
@@ -864,13 +943,13 @@ class TestMeetingCommand:
     @patch("deformentor_cli.cli.dotenv_values")
     def test_switches_child_when_provided(self, mock_dotenv, mock_login, mock_fetch, mock_switch, capsys):
         from deformentor_cli.cli import _meeting
-        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_dotenv.return_value = {"PERSONNUMMER": "000000000000"}
         mock_login.return_value = MagicMock()
         mock_fetch.return_value = {"totalCount": 0, "totalPages": 0, "availabilities": []}
         args = MagicMock()
-        args.child = "Felix"
+        args.child = "Student A"
         _meeting(args)
-        mock_switch.assert_called_once_with(mock_login.return_value, "Felix")
+        mock_switch.assert_called_once_with(mock_login.return_value, "Student A")
 
 
 class TestAttachmentCommand:
@@ -881,7 +960,7 @@ class TestAttachmentCommand:
         from io import BytesIO
         from unittest.mock import patch as mpatch
         from deformentor_cli.cli import _attachment
-        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_dotenv.return_value = {"PERSONNUMMER": "000000000000"}
         mock_login.return_value = MagicMock()
         mock_fetch.return_value = b"%PDF-1.4 test"
         args = MagicMock()
@@ -903,26 +982,26 @@ class TestAttachmentCommand:
         from io import BytesIO
         from unittest.mock import patch as mpatch
         from deformentor_cli.cli import _attachment
-        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_dotenv.return_value = {"PERSONNUMMER": "000000000000"}
         mock_login.return_value = MagicMock()
         mock_fetch.return_value = b"%PDF-1.4 test"
         args = MagicMock()
         args.url = "/Resources/Resource/Download/123?api=IM2"
-        args.child = "Astrid"
+        args.child = "Student A"
         buf = BytesIO()
         fake_stdout = MagicMock()
         fake_stdout.buffer = buf
         fake_stdout.isatty = lambda: False
         with mpatch("sys.stdout", fake_stdout):
             _attachment(args)
-        mock_switch.assert_called_once_with(mock_login.return_value, "Astrid")
+        mock_switch.assert_called_once_with(mock_login.return_value, "Student A")
 
     @patch("deformentor_cli.cli.get_attachment")
     @patch("deformentor_cli.cli.login")
     @patch("deformentor_cli.cli.dotenv_values")
     def test_exits_when_attachment_is_empty(self, mock_dotenv, mock_login, mock_fetch):
         from deformentor_cli.cli import _attachment
-        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_dotenv.return_value = {"PERSONNUMMER": "000000000000"}
         mock_login.return_value = MagicMock()
         mock_fetch.return_value = b""
         args = MagicMock()
@@ -942,7 +1021,7 @@ class TestQuietMode:
         from deformentor_cli.cli import _notifications
         mock_date.today.return_value = date(2026, 3, 30)
         mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
-        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_dotenv.return_value = {"PERSONNUMMER": "000000000000"}
         mock_login.return_value = MagicMock()
         mock_fetch.return_value = []
         args = MagicMock()
@@ -963,7 +1042,7 @@ class TestQuietMode:
         from deformentor_cli.cli import _notifications
         mock_date.today.return_value = date(2026, 3, 30)
         mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
-        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_dotenv.return_value = {"PERSONNUMMER": "000000000000"}
         mock_login.return_value = MagicMock()
         mock_fetch.return_value = []
         args = MagicMock()
@@ -984,12 +1063,11 @@ class TestNonInteractiveSetup:
         from deformentor_cli.cli import _setup
         config_file = tmp_path / "config.env"
         monkeypatch.setattr("deformentor_cli.cli.CONFIG_FILE", config_file)
-        monkeypatch.setattr("deformentor_cli.cli.CONFIG_DIR", tmp_path)
-        monkeypatch.setenv("PERSONNUMMER", "200001011234")
+        monkeypatch.setenv("PERSONNUMMER", "000000000000")
         monkeypatch.setattr("sys.stdin", io.StringIO(""))
         _setup()
         mock_login.assert_called_once()
-        assert "200001011234" in config_file.read_text()
+        assert "000000000000" in config_file.read_text()
 
     def test_fails_without_env_var_when_no_tty(self, monkeypatch, capsys):
         from deformentor_cli.cli import _setup
@@ -1010,11 +1088,11 @@ class TestStatusJson:
     @patch("deformentor_cli.cli.dotenv_values")
     def test_json_output_with_valid_session(self, mock_dotenv, mock_load, mock_new_session, mock_verify, mock_children, capsys):
         from deformentor_cli.cli import _status
-        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_dotenv.return_value = {"PERSONNUMMER": "000000000000"}
         mock_new_session.return_value = MagicMock()
         mock_load.return_value = True
         mock_children.return_value = [
-            {"name": "Doe, Jane", "id": "123", "hybridMappingId": "h1", "selected": True}
+            {"name": "Example, Student", "id": "123", "hybridMappingId": "h1", "selected": True}
         ]
         args = MagicMock()
         args.json_output = True
@@ -1022,6 +1100,7 @@ class TestStatusJson:
         captured = capsys.readouterr()
         data = json.loads(captured.out)
         assert data["configured"] is True
+        assert "personnummer" not in data
         assert data["session"] == "valid"
         assert len(data["children"]) == 1
         assert data["children"][0]["id"] == "123"
@@ -1032,10 +1111,11 @@ class TestStatusJson:
     @patch("deformentor_cli.cli.dotenv_values")
     def test_json_output_expired_session(self, mock_dotenv, mock_load, mock_new_session, mock_verify, capsys):
         from deformentor_cli.cli import _status
-        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_dotenv.return_value = {"PERSONNUMMER": "000000000000"}
         mock_new_session.return_value = MagicMock()
         mock_load.return_value = True
-        mock_verify.side_effect = RuntimeError("expired")
+        from deformentor_cli.errors import AuthenticationError
+        mock_verify.side_effect = AuthenticationError("expired")
         args = MagicMock()
         args.json_output = True
         _status(args)
@@ -1064,6 +1144,23 @@ class TestFieldsFilter:
         result = _filter_fields(data, ["id", "title"])
         assert result == {"id": "123", "title": "Hello"}
 
+    def test_filter_fields_preserves_requested_top_level_order(self):
+        from deformentor_cli.cli import _filter_fields
+        data = {"id": "123", "title": "Hello"}
+
+        result = _filter_fields(data, ["title", "id"])
+
+        assert list(result) == ["title", "id"]
+
+    def test_filter_fields_preserves_mixed_top_level_order(self):
+        from deformentor_cli.cli import _filter_fields
+        data = {"child": "A", "notifications": [{"date": "2026-03-30", "type": {"name": "news"}}]}
+
+        result = _filter_fields(data, ["notifications.date", "child", "notifications.type.name"])
+
+        assert list(result) == ["notifications", "child"]
+        assert list(result["notifications"][0]) == ["date", "type"]
+
     def test_filter_fields_list_of_dicts(self):
         from deformentor_cli.cli import _filter_fields
         data = [
@@ -1089,6 +1186,32 @@ class TestFieldsFilter:
         data = {"id": "123", "title": "Hello"}
         result = _filter_fields(data, None)
         assert result == data
+
+    def test_output_json_rejects_fields_absent_from_non_empty_results(self):
+        from deformentor_cli.cli import _output_json
+        with pytest.raises(SystemExit) as exc_info:
+            _output_json([{"id": "1"}], MagicMock(fields="missing"))
+        assert exc_info.value.code == 2
+
+    def test_output_json_allows_empty_nested_results(self, capsys):
+        from deformentor_cli.cli import _output_json
+        _output_json([{"notifications": []}], MagicMock(fields="notifications.type.name"))
+        assert json.loads(capsys.readouterr().out) == [{"notifications": []}]
+
+
+class TestFieldsUsage:
+    @pytest.mark.parametrize("command", ["setup", "reset", "attachment"])
+    def test_rejects_fields_where_they_have_no_effect(self, command):
+        from deformentor_cli.cli import _validate_fields_usage
+        with pytest.raises(SystemExit) as exc_info:
+            _validate_fields_usage(MagicMock(command=command, fields="id"))
+        assert exc_info.value.code == 2
+
+    def test_status_fields_require_json(self):
+        from deformentor_cli.cli import _validate_fields_usage
+        with pytest.raises(SystemExit) as exc_info:
+            _validate_fields_usage(MagicMock(command="status", fields="session", json_output=False))
+        assert exc_info.value.code == 2
 
 
 class TestHelpExamples:
@@ -1179,16 +1302,15 @@ class TestGetStatusExceptionHandling:
     @patch("deformentor_cli.cli.new_session")
     @patch("deformentor_cli.cli.load_session")
     @patch("deformentor_cli.cli.dotenv_values")
-    def test_children_fetch_failure_returns_empty_children(self, mock_dotenv, mock_load, mock_new_session, mock_verify, mock_children):
+    def test_children_fetch_failure_propagates(self, mock_dotenv, mock_load, mock_new_session, mock_verify, mock_children):
         import requests
         from deformentor_cli.cli import _get_status
-        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_dotenv.return_value = {"PERSONNUMMER": "000000000000"}
         mock_new_session.return_value = MagicMock()
         mock_load.return_value = True
         mock_children.side_effect = requests.ConnectionError("network error")
-        status = _get_status()
-        assert status["session"] == "valid"
-        assert status["children"] == []
+        with pytest.raises(requests.ConnectionError):
+            _get_status()
 
     @patch("deformentor_cli.cli.get_children")
     @patch("deformentor_cli.cli.verify_authenticated")
@@ -1197,7 +1319,7 @@ class TestGetStatusExceptionHandling:
     @patch("deformentor_cli.cli.dotenv_values")
     def test_unexpected_error_propagates(self, mock_dotenv, mock_load, mock_new_session, mock_verify, mock_children):
         from deformentor_cli.cli import _get_status
-        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_dotenv.return_value = {"PERSONNUMMER": "000000000000"}
         mock_new_session.return_value = MagicMock()
         mock_load.return_value = True
         mock_children.side_effect = KeyError("unexpected")
@@ -1268,20 +1390,162 @@ class TestDebugFlag:
         import logging
         from deformentor_cli.cli import _configure_debug
         _configure_debug()
-        logger = logging.getLogger("urllib3")
+        logger = logging.getLogger("deformentor_cli.http")
         assert logger.level == logging.DEBUG
+
+
+class TestPreAuthValidation:
+    @patch("deformentor_cli.cli._get_session")
+    def test_rejects_non_numeric_resource_id_before_auth(self, mock_session):
+        from deformentor_cli.cli import _calendar
+        args = MagicMock(id="not-an-id", child=None, quiet=True, fields=None)
+
+        with pytest.raises(SystemExit) as exc_info:
+            _calendar(args)
+
+        assert exc_info.value.code == 2
+        mock_session.assert_not_called()
+
+    @patch("deformentor_cli.cli._get_session")
+    def test_rejects_non_ascii_numeric_resource_id_before_auth(self, mock_session):
+        from deformentor_cli.cli import _calendar
+        args = MagicMock(id="١٢٣", child=None, quiet=True, fields=None)
+
+        with pytest.raises(SystemExit) as exc_info:
+            _calendar(args)
+
+        assert exc_info.value.code == 2
+        mock_session.assert_not_called()
+
+    @patch("deformentor_cli.cli._get_session")
+    def test_rejects_unsafe_attachment_before_auth(self, mock_session, monkeypatch):
+        from deformentor_cli.cli import _attachment
+        monkeypatch.setattr("sys.stdout", MagicMock(isatty=lambda: False))
+        args = MagicMock(url="https://evil.example/file", child=None, quiet=True)
+
+        with pytest.raises(SystemExit) as exc_info:
+            _attachment(args)
+
+        assert exc_info.value.code == 2
+        mock_session.assert_not_called()
+
+    @patch("deformentor_cli.cli._get_session")
+    def test_rejects_attachment_to_tty_before_auth(self, mock_session, monkeypatch):
+        from deformentor_cli.cli import _attachment
+        monkeypatch.setattr("sys.stdout", MagicMock(isatty=lambda: True))
+        args = MagicMock(url="/Resources/Resource/Download/123", child=None, quiet=True)
+
+        with pytest.raises(SystemExit) as exc_info:
+            _attachment(args)
+
+        assert exc_info.value.code == 2
+        mock_session.assert_not_called()
+
+
+class TestMainExceptionHandling:
+    @pytest.mark.parametrize("status_code,expected_exit", [
+        (401, 3),
+        (403, 3),
+        (404, 4),
+        (500, 5),
+        (400, 1),
+    ])
+    def test_maps_http_status_without_raw_exception(self, status_code, expected_exit, monkeypatch, capsys):
+        import deformentor_cli.cli as cli
+        response = requests.Response()
+        response.status_code = status_code
+        error = requests.HTTPError("secret upstream response", response=response)
+        monkeypatch.setattr("sys.argv", ["deformentor", "status"])
+        monkeypatch.setattr(cli, "_status", MagicMock(side_effect=error))
+
+        with pytest.raises(SystemExit) as exc_info:
+            cli.main()
+
+        assert exc_info.value.code == expected_exit
+        assert "secret upstream response" not in capsys.readouterr().err
+
+    def test_keyboard_interrupt_is_structured(self, monkeypatch, capsys):
+        import deformentor_cli.cli as cli
+        monkeypatch.setattr("sys.argv", ["deformentor", "status"])
+        monkeypatch.setattr(cli, "_status", MagicMock(side_effect=KeyboardInterrupt))
+
+        with pytest.raises(SystemExit) as exc_info:
+            cli.main()
+
+        assert exc_info.value.code == 130
+        assert json.loads(capsys.readouterr().err)["error"] == "interrupted"
+
+    def test_unexpected_error_is_structured_without_traceback(self, monkeypatch, capsys):
+        import deformentor_cli.cli as cli
+        monkeypatch.setattr("sys.argv", ["deformentor", "status"])
+        monkeypatch.setattr(cli, "_status", MagicMock(side_effect=RuntimeError("sensitive detail")))
+
+        with pytest.raises(SystemExit) as exc_info:
+            cli.main()
+
+        assert exc_info.value.code == 1
+        error = capsys.readouterr().err
+        assert json.loads(error)["error"] == "internal_error"
+        assert "sensitive detail" not in error
+        assert "Traceback" not in error
+
+    def test_broken_pipe_exits_quietly(self, monkeypatch, capsys):
+        import deformentor_cli.cli as cli
+        monkeypatch.setattr("sys.argv", ["deformentor", "status"])
+        monkeypatch.setattr(cli, "_status", MagicMock(side_effect=BrokenPipeError))
+
+        with pytest.raises(SystemExit) as exc_info:
+            cli.main()
+
+        assert exc_info.value.code == 0
+        assert capsys.readouterr().err == ""
+
+    def test_real_help_broken_pipe_exits_quietly(self):
+        process = subprocess.Popen(
+            [sys.executable, "-m", "deformentor_cli.cli", "--help"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        process.stdout.close()
+        stderr = process.stderr.read()
+
+        assert process.wait() == 0
+        assert stderr == b""
+
+    def test_other_request_errors_are_network_failures(self, monkeypatch, capsys):
+        import deformentor_cli.cli as cli
+        monkeypatch.setattr("sys.argv", ["deformentor", "status"])
+        monkeypatch.setattr(cli, "_status", MagicMock(side_effect=requests.TooManyRedirects("secret URL")))
+
+        with pytest.raises(SystemExit) as exc_info:
+            cli.main()
+
+        assert exc_info.value.code == 5
+        assert "secret URL" not in capsys.readouterr().err
+
+    def test_unconfirmed_upstream_state_is_network_failure(self, monkeypatch, capsys):
+        import deformentor_cli.cli as cli
+        from deformentor_cli.errors import UpstreamStateError
+        monkeypatch.setattr("sys.argv", ["deformentor", "status"])
+        monkeypatch.setattr(cli, "_status", MagicMock(side_effect=UpstreamStateError("not confirmed")))
+
+        with pytest.raises(SystemExit) as exc_info:
+            cli.main()
+
+        assert exc_info.value.code == 5
+        assert json.loads(capsys.readouterr().err)["error"] == "upstream_state_error"
 
 
 class TestNoInputFlag:
     @patch("deformentor_cli.cli.login")
     def test_setup_no_input_uses_env_var(self, mock_login, monkeypatch, capsys):
         from deformentor_cli.cli import _setup
-        monkeypatch.setenv("PERSONNUMMER", "200001011234")
+        monkeypatch.setenv("PERSONNUMMER", "000000000000")
         monkeypatch.setattr("sys.stdin", MagicMock(isatty=lambda: True))
         mock_login.return_value = MagicMock()
         with patch("deformentor_cli.cli._get_status") as mock_status, \
              patch("deformentor_cli.cli._print_status"):
-            mock_status.return_value = {"configured": True, "personnummer": "0001****1234", "session": "valid", "children": []}
+            mock_status.return_value = {"configured": True, "session": "valid", "children": []}
             _setup(quiet=True, no_input=True)
         mock_login.assert_called_once()
 
@@ -1302,7 +1566,7 @@ class TestGlobalFlagPosition:
         import sys as _sys
         from deformentor_cli.cli import main
 
-        mock_dotenv.return_value = {"PERSONNUMMER": "200001011234"}
+        mock_dotenv.return_value = {"PERSONNUMMER": "000000000000"}
         mock_login.return_value = MagicMock()
         mock_fetch.return_value = []
 
@@ -1342,7 +1606,7 @@ class TestPickupCommentPreview:
         mock_get_comments.return_value = []
         args = MagicMock(
             quiet=True,
-            child="Felix",
+            child="Student A",
             date="2026-06-05",
             comment="Valfri kommentar",
             apply=False,
@@ -1354,7 +1618,7 @@ class TestPickupCommentPreview:
 
         _pickup_comment(args)
 
-        mock_switch_child.assert_called_once_with(session, "Felix", require_unique=False)
+        mock_switch_child.assert_called_once_with(session, "Student A")
         captured = json.loads(capsys.readouterr().out)
         assert captured["mode"] == "preview"
         assert captured["existing_comment"]["found"] is False
@@ -1376,12 +1640,12 @@ class TestPickupCommentPreview:
         mock_get_comments.return_value = [{
             "parentCommentId": 10,
             "userComment": "Befintlig kommentar",
-            "owner": "Romell, David",
+            "owner": "Example, Guardian A",
             "canEditComment": True,
         }]
         args = MagicMock(
             quiet=True,
-            child="Felix",
+            child="Student A",
             date="2026-06-05",
             comment="Valfri kommentar",
             apply=False,
@@ -1395,7 +1659,7 @@ class TestPickupCommentPreview:
 
         captured = json.loads(capsys.readouterr().out)
         assert captured["existing_comment"]["userComment"] == "Befintlig kommentar"
-        assert captured["existing_comment"]["owner"] == "Romell, David"
+        assert captured["existing_comment"]["owner"] == "Example, Guardian A"
         assert captured["blocked"] is True
         assert captured["block_reason"] == "existing_comment_requires_overwrite_confirmation"
 
@@ -1407,7 +1671,7 @@ class TestPickupCommentApplySafety:
 
         args = MagicMock(
             quiet=True,
-            child="Felix",
+            child="Student A",
             date="2026-06-05",
             comment="Valfri kommentar",
             apply=True,
@@ -1431,7 +1695,7 @@ class TestPickupCommentApplySafety:
 
         args = MagicMock(
             quiet=True,
-            child="Felix",
+            child="Student A",
             date="today",
             comment="Valfri kommentar",
             apply=False,
@@ -1455,7 +1719,7 @@ class TestPickupCommentApplySafety:
 
         args = MagicMock(
             quiet=True,
-            child="Felix",
+            child="Student A",
             date="2026-06-05",
             comment="",
             apply=False,
@@ -1487,12 +1751,12 @@ class TestPickupCommentApplySafety:
         mock_get_comments.return_value = [{
             "parentCommentId": 11,
             "userComment": "Gammal kommentar",
-            "owner": "Romell, Lotta",
+            "owner": "Example, Guardian B",
             "canEditComment": False,
         }]
         args = MagicMock(
             quiet=True,
-            child="Felix",
+            child="Student A",
             date="2026-06-05",
             comment="Valfri kommentar",
             apply=True,
@@ -1524,12 +1788,12 @@ class TestPickupCommentApplySafety:
         mock_get_comments.return_value = [{
             "parentCommentId": 11,
             "userComment": "Valfri kommentar",
-            "owner": "Romell, David",
+            "owner": "Example, Guardian A",
             "canEditComment": True,
         }]
         args = MagicMock(
             quiet=True,
-            child="Felix",
+            child="Student A",
             date="2026-06-05",
             comment="Valfri kommentar",
             apply=True,
@@ -1559,7 +1823,7 @@ class TestPickupCommentApplySafety:
         mock_get_registration.side_effect = RuntimeError("No time registration found for 2026-06-05")
         args = MagicMock(
             quiet=True,
-            child="Felix",
+            child="Student A",
             date="2026-06-05",
             comment=None,
             apply=False,
@@ -1589,13 +1853,13 @@ class TestPickupCommentApplySafety:
         mock_get_session.return_value = MagicMock()
         mock_get_registration.return_value = {"timeRegistrationId": 123}
         mock_get_comments.side_effect = [
-            [{"parentCommentId": 11, "userComment": "Gammal kommentar", "owner": "Romell, Lotta", "canEditComment": False}],
-            [{"parentCommentId": 11, "userComment": "Valfri kommentar", "owner": "Romell, David", "canEditComment": True}],
+            [{"parentCommentId": 11, "userComment": "Gammal kommentar", "owner": "Example, Guardian B", "canEditComment": False}],
+            [{"parentCommentId": 11, "userComment": "Valfri kommentar", "owner": "Example, Guardian A", "canEditComment": True}],
         ]
         mock_save.return_value = {"success": True}
         args = MagicMock(
             quiet=True,
-            child="Felix",
+            child="Student A",
             date="2026-06-05",
             comment="Valfri kommentar",
             apply=True,
@@ -1612,7 +1876,7 @@ class TestPickupCommentApplySafety:
         assert captured["write_performed"] is True
         assert captured["verified"] is True
         assert captured["previous_comment"] == "Gammal kommentar"
-        assert captured["previous_owner"] == "Romell, Lotta"
+        assert captured["previous_owner"] == "Example, Guardian B"
 
 
 class TestPickupCommentDestinationLog:
@@ -1624,6 +1888,17 @@ class TestPickupCommentDestinationLog:
 
         log_path = tmp_path / "destination.log"
         assert json.loads(log_path.read_text(encoding="utf-8"))["comment"] == "Valfri kommentar"
+        assert (log_path.stat().st_mode & 0o777) == 0o600
+
+    def test_append_destination_log_restricts_existing_file_before_write(self, tmp_path):
+        from deformentor_cli.cli import _append_destination_log
+
+        log_path = tmp_path / "destination.log"
+        log_path.write_text("")
+        os.chmod(log_path, 0o644)
+
+        _append_destination_log(str(log_path), {"comment": "Example comment"})
+
         assert (log_path.stat().st_mode & 0o777) == 0o600
 
     @patch("deformentor_cli.cli.save_time_registration_comment")
@@ -1641,7 +1916,7 @@ class TestPickupCommentDestinationLog:
         log_path = tmp_path / "informentor" / "destination.log"
         args = MagicMock(
             quiet=True,
-            child="Felix",
+            child="Student A",
             date="2026-06-05",
             comment="Valfri kommentar",
             apply=False,
@@ -1669,13 +1944,13 @@ class TestPickupCommentDestinationLog:
         mock_get_registration.return_value = {"timeRegistrationId": 123}
         mock_get_comments.side_effect = [
             [],
-            [{"parentCommentId": 0, "userComment": "Valfri kommentar", "owner": "Romell, David", "canEditComment": True}],
+            [{"parentCommentId": 0, "userComment": "Valfri kommentar", "owner": "Example, Guardian A", "canEditComment": True}],
         ]
         mock_save.return_value = {"success": True}
         log_path = tmp_path / "informentor" / "destination.log"
         args = MagicMock(
             quiet=True,
-            child="Felix",
+            child="Student A",
             date="2026-06-05",
             comment="Valfri kommentar",
             apply=True,
@@ -1692,7 +1967,7 @@ class TestPickupCommentDestinationLog:
         entry = json.loads(lines[0])
         assert entry["destination"] == "informentor"
         assert entry["action"] == "time_registration_comment_saved"
-        assert entry["child"] == "Felix"
+        assert entry["child"] == "Student A"
         assert entry["date"] == "2026-06-05"
         assert entry["comment"] == "Valfri kommentar"
         assert entry["verified"] is True
@@ -1706,7 +1981,7 @@ class TestResetCommand:
 
         config = tmp_path / "config.env"
         session = tmp_path / "session.json"
-        config.write_text("PERSONNUMMER=200001011234\n")
+        config.write_text("PERSONNUMMER=000000000000\n")
         session.write_text("{}")
 
         args = MagicMock()
@@ -1750,7 +2025,7 @@ class TestResetCommand:
 
         config = tmp_path / "config.env"
         session = tmp_path / "session.json"
-        config.write_text("PERSONNUMMER=200001011234\n")
+        config.write_text("PERSONNUMMER=000000000000\n")
 
         args = MagicMock()
         args.quiet = True
@@ -1769,7 +2044,7 @@ class TestResetCommand:
 
         config = tmp_path / "config.env"
         session = tmp_path / "session.json"
-        config.write_text("PERSONNUMMER=200001011234\n")
+        config.write_text("PERSONNUMMER=000000000000\n")
 
         args = MagicMock()
         args.quiet = False
@@ -1785,6 +2060,20 @@ class TestResetCommand:
             assert exc.value.code == 1
 
         captured = capsys.readouterr()
-        data = json.loads(captured.out)
-        assert len(data["failed"]) == 1
-        assert "Failed to delete" in captured.err
+        assert captured.out == ""
+        error = json.loads(captured.err)
+        assert error["error"] == "reset_failed"
+        assert "Permission denied" not in captured.err
+
+
+class TestConfigFilePermissions:
+    def test_write_config_replaces_permissive_file_with_0600(self, tmp_path):
+        from deformentor_cli.cli import _write_config
+        config = tmp_path / "config.env"
+        config.write_text("old")
+        os.chmod(config, 0o644)
+
+        with patch("deformentor_cli.cli.CONFIG_FILE", config):
+            _write_config("PERSONNUMMER=000000000000\n", quiet=True)
+
+        assert os.stat(config).st_mode & 0o777 == 0o600

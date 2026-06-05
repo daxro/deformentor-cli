@@ -13,6 +13,14 @@ class FrejaError(Exception):
     """Base error for Freja eID+ authentication."""
 
 
+class AuthenticationError(Exception):
+    """Authentication failed outside the Freja approval step."""
+
+
+class UpstreamStateError(Exception):
+    """An upstream operation completed without the expected state change."""
+
+
 class FrejaTimeoutError(FrejaError):
     """Authentication timed out or expired."""
 

@@ -2,15 +2,16 @@ import json
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
-from deformentor_cli.errors import FrejaError, FrejaRejectedError, FrejaTimeoutError
+from deformentor_cli.errors import AuthenticationError, FrejaError, FrejaRejectedError, FrejaTimeoutError
 from deformentor_cli.freja import freja_login, _ensure_12_digits
 
 FREJA_URL = (
     "https://login003.stockholm.se/NECSadcfreja/authenticate/NECSadcfreja"
     "?TYPE=33554433&REALMOID=06-abc&TARGET=-SM-https%3a%2f%2fexample.com"
 )
-PERSONNUMMER = "0001011234"
+PERSONNUMMER = "0000000000"
 
 
 def _mock_session(poll_responses):
@@ -48,13 +49,13 @@ class TestFrejaLogin:
         init_url = session.post.call_args[0][0]
         assert "TYPE=" not in init_url
         assert "action=init" in init_url
-        assert "userInput=200001011234" in init_url
+        assert "userInput=200000000000" in init_url
 
     def test_12_digit_personnummer_passed_through(self):
         session = _mock_session(["APPROVED"])
-        freja_login(session, FREJA_URL, "200001011234", poll_interval=0)
+        freja_login(session, FREJA_URL, "000000000000", poll_interval=0)
         init_url = session.post.call_args[0][0]
-        assert "userInput=200001011234" in init_url
+        assert "userInput=000000000000" in init_url
 
     def test_poll_url_keeps_query_params(self):
         session = _mock_session(["APPROVED"])
@@ -62,6 +63,13 @@ class TestFrejaLogin:
         poll_url = session.get.call_args[0][0]
         assert "TYPE=33554433" in poll_url
         assert "action=checkstatus" in poll_url
+
+    def test_disables_automatic_redirects(self):
+        session = _mock_session(["APPROVED"])
+        freja_login(session, FREJA_URL, PERSONNUMMER, poll_interval=0)
+
+        assert session.post.call_args.kwargs["allow_redirects"] is False
+        assert session.get.call_args.kwargs["allow_redirects"] is False
 
     def test_canceled_raises_rejected(self):
         session = _mock_session(["STARTED", "CANCELED"])
@@ -130,7 +138,24 @@ class TestFrejaLogin:
         init_resp.status_code = 500
         session.post.return_value = init_resp
 
-        with pytest.raises(FrejaError, match="initiate"):
+        with pytest.raises(requests.HTTPError):
+            freja_login(session, FREJA_URL, PERSONNUMMER, poll_interval=0)
+
+    def test_init_redirect_is_rejected(self):
+        session = MagicMock()
+        response = MagicMock(status_code=302, ok=True)
+        session.post.return_value = response
+
+        with pytest.raises(AuthenticationError, match="unexpected redirect"):
+            freja_login(session, FREJA_URL, PERSONNUMMER, poll_interval=0)
+
+        session.get.assert_not_called()
+
+    def test_poll_redirect_is_rejected(self):
+        session = _mock_session(["APPROVED"])
+        session.get.side_effect = [MagicMock(status_code=302, ok=True)]
+
+        with pytest.raises(AuthenticationError, match="unexpected redirect"):
             freja_login(session, FREJA_URL, PERSONNUMMER, poll_interval=0)
 
     def test_unknown_status_keeps_polling(self):
@@ -141,17 +166,17 @@ class TestFrejaLogin:
 
 class TestEnsure12Digits:
     def test_12_digit_passed_through(self):
-        assert _ensure_12_digits("200001011234") == "200001011234"
+        assert _ensure_12_digits("000000000000") == "000000000000"
 
     def test_10_digit_young_gets_20_prefix(self):
-        assert _ensure_12_digits("0001011234") == "200001011234"
+        assert _ensure_12_digits("0000000000") == "200000000000"
 
     @patch("deformentor_cli.freja.datetime")
     def test_10_digit_old_gets_19_prefix(self, mock_datetime):
         mock_datetime.date.today.return_value = MagicMock(year=2026)
-        assert _ensure_12_digits("9903041234") == "199903041234"
+        assert _ensure_12_digits("9900000000") == "199900000000"
 
     @patch("deformentor_cli.freja.datetime")
     def test_cutoff_year_gets_20_prefix(self, mock_datetime):
         mock_datetime.date.today.return_value = MagicMock(year=2026)
-        assert _ensure_12_digits("2601011234") == "202601011234"
+        assert _ensure_12_digits("2600000000") == "202600000000"

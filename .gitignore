@@ -1,5 +1,9 @@
 .DS_Store
-.env
+.env*
+!.env.example
+config.env
+session.json
+destination.log
 __pycache__/
 *.pyc
 *.egg-info/
@@ -9,6 +13,5 @@ build/
 .pytest_cache/
 _temp_inbox/
 .playwright-mcp/
-uv.lock
 .claude/
 CLAUDE.local.md

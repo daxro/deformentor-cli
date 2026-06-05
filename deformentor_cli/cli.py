@@ -18,15 +18,18 @@ except ImportError:
     _HAS_ARGCOMPLETE = False
 
 from deformentor_cli.errors import (
-    FrejaError, emit_error, EXIT_AUTH, EXIT_ERROR, EXIT_NETWORK, EXIT_NOT_FOUND, EXIT_USAGE,
+    AuthenticationError, FrejaError, UpstreamStateError, emit_error, EXIT_AUTH,
+    EXIT_ERROR, EXIT_NETWORK, EXIT_NOT_FOUND, EXIT_USAGE,
 )
 from deformentor_cli.api import (
     fetch_all_notifications, fetch_all_messages, get_attachment, get_attendance_detail,
     get_calendar_event, get_children, get_meeting_availabilities, get_news_detail,
     get_time_registration_comments, get_time_registration_for_date,
     normalize_time_registration_comment, save_time_registration_comment, switch_child,
+    validate_attachment_url,
 )
-from deformentor_cli.paths import CONFIG_DIR, CONFIG_FILE, SESSION_FILE
+from deformentor_cli.paths import CONFIG_FILE, SESSION_FILE, write_private_text
+from deformentor_cli.session import login, new_session, load_session, verify_authenticated
 
 _LOGO_LINES = [
     r"    _      __                       _               ___ _    ___ ",
@@ -69,7 +72,12 @@ def print_logo(use_color=None):
             print(f"{_CYAN}{main_part}{_RESET}  {_BOLD_WHITE}{cli_part}{_RESET}", file=sys.stderr)
         else:
             print(f"{main_part}  {cli_part}", file=sys.stderr)
-from deformentor_cli.session import login, new_session, load_session, verify_authenticated
+
+
+def _maybe_print_logo():
+    """Print decorative branding only for an interactive stderr."""
+    if sys.stderr.isatty():
+        print_logo(_should_use_color())
 
 KNOWN_NOTIFICATION_TYPES = {"attendance", "calendar", "news", "meeting", "message"}
 
@@ -77,11 +85,17 @@ _DEFAULT_SINCE_DAYS = 30
 # _DEFAULT_UNTIL_DAYS: no default upper bound yet. Reserved for future lookup.
 
 
-def _mask_personnummer(pnr):
-    """200001011234 -> 0001****1234. Short input returned as-is."""
-    if len(pnr) < 9:
-        return pnr
-    return pnr[2:6] + "****" + pnr[8:]
+def _validate_personnummer(personnummer, stored=False):
+    """Validate a personnummer without echoing it in errors."""
+    if isinstance(personnummer, str) and re.fullmatch(r"[0-9]{12}", personnummer):
+        return personnummer
+    if stored:
+        emit_error(
+            "invalid_config",
+            "Stored PERSONNUMMER must be 12 digits. Run: deformentor setup",
+            exit_code=EXIT_USAGE,
+        )
+    emit_error("invalid_input", "Invalid personnummer. Must be 12 digits (YYYYMMDDXXXX).", exit_code=EXIT_USAGE)
 
 
 def _get_status():
@@ -91,7 +105,6 @@ def _get_status():
 
     status = {
         "configured": bool(personnummer),
-        "personnummer": _mask_personnummer(personnummer) if personnummer else None,
         "session": None,
         "children": [],
         "config_path": str(CONFIG_FILE),
@@ -99,17 +112,15 @@ def _get_status():
     }
 
     if personnummer:
+        _validate_personnummer(personnummer, stored=True)
         session = new_session()
         if load_session(session, str(SESSION_FILE)):
             try:
                 verify_authenticated(session)
                 status["session"] = "valid"
-                try:
-                    children = get_children(session)
-                    status["children"] = [{"name": c["name"], "id": c["id"]} for c in children]
-                except (requests.RequestException, RuntimeError):
-                    pass
-            except (requests.RequestException, RuntimeError):
+                children = get_children(session)
+                status["children"] = [{"name": c["name"], "id": c["id"]} for c in children]
+            except AuthenticationError:
                 status["session"] = "expired"
         else:
             status["session"] = "none"
@@ -123,7 +134,6 @@ def _print_status(status):
         print("Not configured. Run: deformentor setup")
         return
 
-    print(f"Personnummer: {status['personnummer']}")
     print(f"Config: {status['config_path']}")
     print(f"Session: {status['session']}")
     if status["session"] == "expired":
@@ -153,7 +163,10 @@ def _validate_date_flag(value, flag_name):
         return None
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
         emit_error("invalid_input", f"{flag_name} must be YYYY-MM-DD or 'all'.", exit_code=EXIT_USAGE)
-    return value
+    try:
+        return date.fromisoformat(value).isoformat()
+    except ValueError:
+        emit_error("invalid_input", f"{flag_name} must be a real calendar date.", exit_code=EXIT_USAGE)
 
 
 def _resolve_since(cli_value, config):
@@ -199,6 +212,13 @@ def _validate_comment_text(comment_text):
     return comment_text
 
 
+def _validate_positive_decimal_id(value, label):
+    """Validate documented numeric resource IDs before authentication."""
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9]+", value) or int(value) <= 0:
+        emit_error("invalid_input", f"{label} must be a positive decimal ID.", exit_code=EXIT_USAGE)
+    return value
+
+
 def _filter_children(results, firstname):
     """Filter result list by child firstname (case-insensitive). None = no filter."""
     if firstname is None:
@@ -234,13 +254,11 @@ def _child_first_name(child_name):
     return child_name.split(",")[-1].strip()
 
 
-def _resolve_and_switch_child(session, firstname, require_unique=False):
+def _resolve_and_switch_child(session, firstname):
     """Find child by name (case-insensitive) and switch session context.
 
-    Exits if no match. Warns if multiple match in read mode. In write mode
-    (require_unique=True), multiple substring matches must collapse to one
-    exact first-name/full-name match; otherwise the command exits instead of
-    risking a write for the wrong child.
+    Multiple substring matches must collapse to one exact first-name/full-name
+    match. All context switches fail closed.
     """
     children = get_children(session)
     firstname_lower = firstname.lower()
@@ -253,25 +271,20 @@ def _resolve_and_switch_child(session, firstname, require_unique=False):
             c for c in matches
             if c["name"].lower() == firstname_lower or _child_first_name(c["name"]).lower() == firstname_lower
         ]
-        if require_unique:
-            if len(exact_matches) == 1:
-                matches = exact_matches
-            else:
-                emit_error(
-                    "ambiguous_child",
-                    f"'{firstname}' matches multiple children: {names}. Use a unique or exact child name.",
-                    exit_code=EXIT_USAGE,
-                )
+        if len(exact_matches) == 1:
+            matches = exact_matches
         else:
-            print(f"Warning: multiple children match '{firstname}': {names}. Using first match.", file=sys.stderr)
+            emit_error(
+                "ambiguous_child",
+                f"'{firstname}' matches multiple children: {names}. Use a unique or exact child name.",
+                exit_code=EXIT_USAGE,
+            )
     switch_child(session, matches[0]["id"])
 
 
 def _write_config(content, quiet=False):
     """Write config content to CONFIG_FILE, creating directories as needed."""
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    CONFIG_FILE.write_text(content)
-    os.chmod(CONFIG_FILE, 0o600)
+    write_private_text(CONFIG_FILE, content)
     _progress(f"Saved to {CONFIG_FILE}", quiet)
 
 
@@ -286,7 +299,7 @@ def _get_version():
     try:
         return _pkg_version("deformentor-cli")
     except PackageNotFoundError:
-        return "0.1.0-dev"
+        return "0.2.0-dev"
 
 
 class _DeformentorParser(argparse.ArgumentParser):
@@ -299,14 +312,15 @@ class _DeformentorParser(argparse.ArgumentParser):
 
 
 def _configure_debug():
-    """Enable debug logging of HTTP requests to stderr."""
+    """Enable sanitized HTTP response metadata logging to stderr."""
     import logging
-    logging.basicConfig(
-        format="%(levelname)s %(name)s: %(message)s",
-        level=logging.DEBUG,
-        stream=sys.stderr,
-    )
-    logging.getLogger("urllib3").setLevel(logging.DEBUG)
+    logger = logging.getLogger("deformentor_cli.http")
+    logger.handlers.clear()
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+    logger.addHandler(handler)
+    logger.setLevel(logging.DEBUG)
+    logger.propagate = False
 
 
 def _filter_fields(data, fields):
@@ -323,21 +337,23 @@ def _filter_fields(data, fields):
         return data
 
     result = {}
-    top_level = set()
-    nested = {}
+    grouped = {}
     for field in fields:
         parts = field.split(".", 1)
+        key = parts[0]
+        if key not in grouped:
+            grouped[key] = [] if len(parts) == 2 else None
         if len(parts) == 1:
-            top_level.add(parts[0])
-        else:
-            nested.setdefault(parts[0], []).append(parts[1])
+            grouped[key] = None
+        elif grouped[key] is not None:
+            grouped[key].append(parts[1])
 
-    for key in top_level:
-        if key in data:
+    for key, sub_fields in grouped.items():
+        if key not in data:
+            continue
+        if sub_fields is None:
             result[key] = data[key]
-
-    for key, sub_fields in nested.items():
-        if key in data:
+        else:
             result[key] = _filter_fields(data[key], sub_fields)
 
     return result
@@ -347,8 +363,39 @@ def _output_json(data, args):
     """Print data as JSON to stdout, applying --fields filter if set."""
     fields = getattr(args, "fields", None)
     field_list = [f.strip() for f in fields.split(",")] if isinstance(fields, str) and fields else None
+    if field_list and data and not any(_field_exists(data, field.split(".")) for field in field_list):
+        emit_error(
+            "field_not_found",
+            f"None of the requested fields exist: {', '.join(field_list)}",
+            exit_code=EXIT_USAGE,
+        )
     data = _filter_fields(data, field_list)
     print(json.dumps(data, ensure_ascii=False, indent=2))
+
+
+def _field_exists(data, path):
+    """Return whether a dotted field exists in any non-empty result."""
+    if isinstance(data, list):
+        return not data or any(_field_exists(item, path) for item in data)
+    if not isinstance(data, dict) or not path or path[0] not in data:
+        return False
+    if len(path) == 1:
+        return True
+    return _field_exists(data[path[0]], path[1:])
+
+
+def _validate_fields_usage(args):
+    """Reject empty, malformed, or ineffective --fields use."""
+    fields = getattr(args, "fields", None)
+    if fields is None:
+        return
+    field_list = [field.strip() for field in fields.split(",")]
+    if not field_list or any(not field or any(not part for part in field.split(".")) for field in field_list):
+        emit_error("invalid_input", "--fields must contain valid comma-separated dotted field names.", exit_code=EXIT_USAGE)
+    if args.command in {"setup", "reset", "attachment"}:
+        emit_error("invalid_input", f"--fields has no effect for {args.command}.", exit_code=EXIT_USAGE)
+    if args.command == "status" and not args.json_output:
+        emit_error("invalid_input", "--fields requires status --json.", exit_code=EXIT_USAGE)
 
 
 class _LogoHelpAction(argparse.Action):
@@ -356,13 +403,49 @@ class _LogoHelpAction(argparse.Action):
         super().__init__(option_strings=option_strings, dest=dest, default=default, nargs=0, help=help)
 
     def __call__(self, parser, namespace, values, option_string=None):
-        use_color = _should_use_color()
-        print_logo(use_color)
+        _maybe_print_logo()
         parser.print_help(sys.stdout)
         parser.exit()
 
 
 def main():
+    """Run the CLI and silence broken pipes, including buffered shutdown writes."""
+    try:
+        result = _run_cli()
+    except BrokenPipeError:
+        _exit_broken_pipe()
+    except SystemExit:
+        _flush_stdout_or_exit()
+        raise
+    _flush_stdout_or_exit()
+    return result
+
+
+def _flush_stdout_or_exit():
+    if sys.stdout is None:
+        return
+    try:
+        sys.stdout.flush()
+    except BrokenPipeError:
+        _exit_broken_pipe()
+
+
+def _exit_broken_pipe():
+    """Redirect stdout away from a closed pipe and exit without a traceback."""
+    try:
+        stdout_fd = sys.stdout.fileno()
+        devnull_fd = os.open(os.devnull, os.O_WRONLY)
+        try:
+            os.dup2(devnull_fd, stdout_fd)
+        finally:
+            os.close(devnull_fd)
+    except (AttributeError, OSError, ValueError):
+        pass
+    sys.stdout = None
+    raise SystemExit(0)
+
+
+def _run_cli():
     parser = _DeformentorParser(
         prog="deformentor",
         description="Fetch school notifications and messages from InfoMentor via Freja eID+.",
@@ -381,7 +464,7 @@ def main():
     parser.add_argument("--version", action="version", version=f"%(prog)s {_get_version()}")
     parser.add_argument("-q", "--quiet", action="store_true", help="Suppress progress messages on stderr")
     parser.add_argument("--no-input", action="store_true", help="Never prompt for input (fail if input would be needed)")
-    parser.add_argument("--debug", action="store_true", help="Log HTTP requests and responses to stderr")
+    parser.add_argument("--debug", action="store_true", help="Log sanitized HTTP metadata to stderr")
     parser.add_argument("--fields", help="Comma-separated list of fields to include in output")
 
     # Parent parsers so global flags are accepted after the subcommand name too.
@@ -394,20 +477,19 @@ def main():
     _base_flags.add_argument("--no-input", action="store_true",
                              default=argparse.SUPPRESS, help="Never prompt for input (fail if input would be needed)")
     _base_flags.add_argument("--debug", action="store_true",
-                             default=argparse.SUPPRESS, help="Log HTTP requests and responses to stderr")
+                             default=argparse.SUPPRESS, help="Log sanitized HTTP metadata to stderr")
     _global_flags = argparse.ArgumentParser(add_help=False, parents=[_base_flags])
     _global_flags.add_argument("--fields",
                                default=argparse.SUPPRESS, help="Comma-separated list of fields to include in output")
 
     subparsers = parser.add_subparsers(dest="command", title="commands", parser_class=_DeformentorParser)
-    subparsers.add_parser("setup", parents=[_base_flags], help="Configure personnummer for login",
-        epilog="In non-interactive mode (--no-input), set the PERSONNUMMER env var.",
+    subparsers.add_parser("setup", parents=[_base_flags], help="Interactively configure login",
         formatter_class=argparse.RawDescriptionHelpFormatter)
     notif_parser = subparsers.add_parser("notifications", parents=[_global_flags],
         help="Fetch notifications and messages for all children",
         epilog="""examples:
   deformentor notifications --since all       All notifications, no date limit
-  deformentor notifications --child Anna      Filter by child name
+  deformentor notifications --child CHILD_NAME  Filter by child name
   deformentor notifications --type attendance  Filter by notification type""",
         formatter_class=argparse.RawDescriptionHelpFormatter)
     notif_parser.add_argument("--child", help="Filter by child name (case-insensitive substring match)")
@@ -417,7 +499,7 @@ def main():
     msg_parser = subparsers.add_parser("messages", parents=[_global_flags],
         help="Fetch messages for all children",
         epilog="""examples:
-  deformentor messages --child Anna       Messages for one child
+  deformentor messages --child CHILD_NAME  Messages for one child
   deformentor messages --since 2026-01-01  Messages since a date
   deformentor messages --since all         All messages""",
         formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -440,19 +522,19 @@ def main():
     pickup_parser = subparsers.add_parser("comment", parents=[_global_flags],
         help="Read, preview, or apply a time registration comment for one date",
         epilog="""examples:
-  deformentor comment --child Felix --date 2026-06-05
-  deformentor comment --child Felix --date 2026-06-06 --comment \"Hämtas av morfar\"
-  deformentor comment --child Felix --date 2026-06-05 --comment \"Hämtas av morfar\" --apply --confirm
+  deformentor comment --child CHILD_NAME --date 2026-06-05
+  deformentor comment --child CHILD_NAME --date 2026-06-06 --comment \"COMMENT_TEXT\"
+  deformentor comment --child CHILD_NAME --date 2026-06-05 --comment \"COMMENT_TEXT\" --apply --confirm
 
 safety:
   default is preview/read-only; --apply --confirm is required to write
-  --child must be an exact or unique match when --apply writes
+  --child must be an exact or unique match
   --comment is kept exactly as provided; whitespace is preserved
   --overwrite-existing is required to replace another non-empty comment
   --destination-log is appended only after a verified write and is chmod 0600
   plain filenames such as destination.log are supported""",
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    pickup_parser.add_argument("--child", required=True, help="Switch to this child's context before reading or writing; exact or unique match required for --apply")
+    pickup_parser.add_argument("--child", required=True, help="Switch to this child's context; exact or unique match required")
     pickup_parser.add_argument("--date", required=True, help="Comment date in exact YYYY-MM-DD format")
     pickup_parser.add_argument("--comment", help="Exact comment text to preview or write; whitespace is preserved")
     pickup_parser.add_argument("--apply", action="store_true", help="Actually write the comment after all safety checks pass")
@@ -474,16 +556,15 @@ safety:
         argcomplete.autocomplete(parser)
     args = parser.parse_args()
 
-    if getattr(args, "debug", False):
-        _configure_debug()
-
     if args.command is None:
-        use_color = _should_use_color()
-        print_logo(use_color)
+        _maybe_print_logo()
         parser.print_help(sys.stdout)
         sys.exit(0)
 
     try:
+        _validate_fields_usage(args)
+        if getattr(args, "debug", False):
+            _configure_debug()
         if args.command == "setup":
             _setup(quiet=args.quiet, no_input=getattr(args, "no_input", False))
         elif args.command == "notifications":
@@ -506,21 +587,39 @@ safety:
             _status(args)
         elif args.command == "reset":
             _reset(args)
+    except BrokenPipeError:
+        _exit_broken_pipe()
     except KeyboardInterrupt:
-        sys.exit(130)
+        emit_error("interrupted", "Interrupted by user.", exit_code=130)
+    except AuthenticationError:
+        emit_error("auth_failed", "InfoMentor authentication failed.", exit_code=EXIT_AUTH)
     except FrejaError as e:
         emit_error("auth_failed", f"Freja authentication failed: {e}", exit_code=EXIT_AUTH)
+    except UpstreamStateError as e:
+        emit_error("upstream_state_error", str(e), exit_code=EXIT_NETWORK)
     except requests.HTTPError as e:
-        emit_error("http_error", f"HTTP error: {e}", exit_code=EXIT_NETWORK)
+        status_code = getattr(e.response, "status_code", None)
+        if status_code in {401, 403}:
+            emit_error("auth_failed", f"Authentication failed with HTTP status {status_code}.", exit_code=EXIT_AUTH)
+        if status_code == 404:
+            emit_error("not_found", "The requested resource was not found.", exit_code=EXIT_NOT_FOUND)
+        if status_code is not None and status_code >= 500:
+            emit_error("server_error", f"InfoMentor returned HTTP status {status_code}.", exit_code=EXIT_NETWORK)
+        message = f"Request failed with HTTP status {status_code}." if status_code is not None else "HTTP request failed."
+        emit_error("http_error", message, exit_code=EXIT_ERROR)
     except requests.Timeout:
         emit_error("request_timeout", "Request timed out.", exit_code=EXIT_NETWORK)
     except requests.ConnectionError:
         emit_error("connection_failed", "Connection failed. Check your network.", exit_code=EXIT_NETWORK)
+    except requests.RequestException:
+        emit_error("request_failed", "Request failed.", exit_code=EXIT_NETWORK)
+    except Exception:
+        emit_error("internal_error", "Unexpected internal error.", exit_code=EXIT_ERROR)
 
 
 def _setup(quiet=False, no_input=False):
     if not no_input and sys.stdin.isatty():
-        print_logo(_should_use_color())
+        _maybe_print_logo()
     if no_input or not sys.stdin.isatty():
         personnummer = os.environ.get("PERSONNUMMER")
         if not personnummer:
@@ -529,8 +628,7 @@ def _setup(quiet=False, no_input=False):
                 "PERSONNUMMER env var required in non-interactive mode.",
                 exit_code=EXIT_USAGE,
             )
-        if not personnummer.isdigit() or len(personnummer) != 12:
-            emit_error("invalid_input", "Invalid personnummer. Must be 12 digits (YYYYMMDDXXXX).", exit_code=EXIT_USAGE)
+        _validate_personnummer(personnummer)
         _write_config(f"PERSONNUMMER={personnummer}\n", quiet)
         login(personnummer, session_path=str(SESSION_FILE), quiet=quiet)
         _progress("Authenticated.", quiet)
@@ -539,7 +637,8 @@ def _setup(quiet=False, no_input=False):
 
     existing = dotenv_values(CONFIG_FILE).get("PERSONNUMMER") if CONFIG_FILE.exists() else None
     if existing:
-        print(f"Already configured (PERSONNUMMER={_mask_personnummer(existing)})", file=sys.stderr)
+        _validate_personnummer(existing, stored=True)
+        print("Already configured.", file=sys.stderr)
         answer = input("Overwrite? [y/N] ").strip().lower()
         if answer != "y":
             login(existing, session_path=str(SESSION_FILE))
@@ -548,8 +647,7 @@ def _setup(quiet=False, no_input=False):
             return
 
     personnummer = input("Personnummer (12 digits): ").strip()
-    if not personnummer.isdigit() or len(personnummer) != 12:
-        emit_error("invalid_input", "Invalid personnummer. Must be 12 digits (YYYYMMDDXXXX).", exit_code=EXIT_USAGE)
+    _validate_personnummer(personnummer)
 
     _write_config(f"PERSONNUMMER={personnummer}\n", quiet)
 
@@ -564,6 +662,7 @@ def _get_session(quiet=False):
     personnummer = config.get("PERSONNUMMER")
     if not personnummer:
         emit_error("not_configured", "PERSONNUMMER not set. Run: deformentor setup", exit_code=EXIT_AUTH)
+    _validate_personnummer(personnummer, stored=True)
     return login(personnummer, session_path=str(SESSION_FILE), quiet=quiet)
 
 
@@ -573,9 +672,14 @@ def _append_destination_log(path, entry):
     if directory:
         os.makedirs(directory, mode=0o700, exist_ok=True)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-    with os.fdopen(fd, "a", encoding="utf-8") as fh:
-        fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
-    os.chmod(path, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "a", encoding="utf-8") as fh:
+            fd = None
+            fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    finally:
+        if fd is not None:
+            os.close(fd)
 
 
 def _pickup_comment(args):
@@ -587,7 +691,7 @@ def _pickup_comment(args):
         emit_error("invalid_input", "--apply requires --confirm.", exit_code=EXIT_USAGE)
 
     session = _get_session(quiet=args.quiet)
-    _resolve_and_switch_child(session, args.child, require_unique=args.apply)
+    _resolve_and_switch_child(session, args.child)
     registration = None
 
     try:
@@ -689,13 +793,17 @@ def _notifications(args):
     if since and until and since > until:
         emit_error("invalid_input", "--since cannot be after --until.", exit_code=EXIT_USAGE)
     if args.type and args.type.lower() not in KNOWN_NOTIFICATION_TYPES:
-        print(f"Warning: '{args.type}' is not a known type. Known types: {', '.join(sorted(KNOWN_NOTIFICATION_TYPES))}", file=sys.stderr)
+        emit_error(
+            "invalid_input",
+            f"Unknown notification type '{args.type}'. Known types: {', '.join(sorted(KNOWN_NOTIFICATION_TYPES))}",
+            exit_code=EXIT_USAGE,
+        )
     session = _get_session(quiet=args.quiet)
     _progress("Fetching notifications...", args.quiet)
     result = fetch_all_notifications(session)
     result = _filter_children(result, args.child)
     if args.child and not result:
-        print(f"Warning: no child matching '{args.child}'", file=sys.stderr)
+        emit_error("child_not_found", f"No child matching '{args.child}'.", exit_code=EXIT_NOT_FOUND)
     for entry in result:
         entry["notifications"] = _filter_items_by_type(entry["notifications"], args.type)
         entry["notifications"] = _filter_items_since(entry["notifications"], since)
@@ -709,17 +817,21 @@ def _messages(args):
     until = _resolve_until(getattr(args, "until", None))
     if since and until and since > until:
         emit_error("invalid_input", "--since cannot be after --until.", exit_code=EXIT_USAGE)
+    fetch_all_pages = getattr(args, "all_pages", False) is True
+    raw_max_pages = getattr(args, "max_pages", None)
+    if not isinstance(raw_max_pages, int):
+        raw_max_pages = None
+    if raw_max_pages is not None and not fetch_all_pages:
+        emit_error("invalid_input", "--max-pages requires --all-pages.", exit_code=EXIT_USAGE)
+    if raw_max_pages is not None and raw_max_pages <= 0:
+        emit_error("invalid_input", "--max-pages must be a positive integer.", exit_code=EXIT_USAGE)
+    max_pages = raw_max_pages if raw_max_pages is not None else 50
     session = _get_session(quiet=args.quiet)
     _progress("Fetching messages...", args.quiet)
-    fetch_all_pages = getattr(args, "all_pages", False)
-    raw_max_pages = getattr(args, "max_pages", None)
-    if raw_max_pages is not None and not fetch_all_pages:
-        print("Warning: --max-pages has no effect without --all-pages", file=sys.stderr)
-    max_pages = raw_max_pages if raw_max_pages is not None else 50
     result = fetch_all_messages(session, fetch_all_pages=fetch_all_pages, max_pages=max_pages)
     result = _filter_children(result, args.child)
     if args.child and not result:
-        print(f"Warning: no child matching '{args.child}'", file=sys.stderr)
+        emit_error("child_not_found", f"No child matching '{args.child}'.", exit_code=EXIT_NOT_FOUND)
     for entry in result:
         entry["messages"] = _filter_items_since(entry["messages"], since)
         entry["messages"] = _filter_items_until(entry["messages"], until)
@@ -727,6 +839,7 @@ def _messages(args):
 
 
 def _calendar(args):
+    _validate_positive_decimal_id(args.id, "Calendar event ID")
     session = _get_session(quiet=args.quiet)
     if args.child:
         _resolve_and_switch_child(session, args.child)
@@ -736,6 +849,7 @@ def _calendar(args):
 
 
 def _attendance(args):
+    _validate_positive_decimal_id(args.id, "Attendance request ID")
     session = _get_session(quiet=args.quiet)
     if args.child:
         _resolve_and_switch_child(session, args.child)
@@ -745,6 +859,7 @@ def _attendance(args):
 
 
 def _news(args):
+    _validate_positive_decimal_id(args.id, "News item ID")
     session = _get_session(quiet=args.quiet)
     if args.child:
         _resolve_and_switch_child(session, args.child)
@@ -768,9 +883,13 @@ def _meeting(args):
 
 
 def _attachment(args):
-    session = _get_session(quiet=args.quiet)
     if sys.stdout.isatty():
         emit_error("usage_error", "Binary output. Redirect to a file: deformentor attachment --url <path> > file.pdf", exit_code=EXIT_USAGE)
+    try:
+        validate_attachment_url(args.url)
+    except ValueError as e:
+        emit_error("invalid_input", str(e), exit_code=EXIT_USAGE)
+    session = _get_session(quiet=args.quiet)
     if args.child:
         _resolve_and_switch_child(session, args.child)
     _progress("Fetching attachment...", args.quiet)
@@ -792,18 +911,20 @@ def _reset(args):
             try:
                 path.unlink()
                 deleted.append(str(path))
-            except OSError as e:
+            except OSError:
                 failed.append(str(path))
-                if not args.quiet:
-                    print(f"Failed to delete {path}: {e}", file=sys.stderr)
+    if failed:
+        emit_error(
+            "reset_failed",
+            f"Could not delete {len(failed)} local state file(s).",
+            exit_code=EXIT_ERROR,
+        )
     if not args.quiet and deleted:
         for p in deleted:
             print(f"Deleted {p}", file=sys.stderr)
     if not args.quiet and not deleted and not failed:
-        print("Nothing to reset — no config or session files found.", file=sys.stderr)
+        print("Nothing to reset - no config or session files found.", file=sys.stderr)
     print(json.dumps({"reset": True, "deleted": deleted, "failed": failed}))
-    if failed:
-        sys.exit(EXIT_ERROR)
 
 
 if __name__ == "__main__":

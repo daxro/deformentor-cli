@@ -5,9 +5,20 @@ import json
 import time
 from urllib.parse import urlparse, urlunparse
 
-from deformentor_cli.errors import FrejaError, FrejaRejectedError, FrejaTimeoutError
+import requests
+
+from deformentor_cli.errors import (
+    AuthenticationError, FrejaError, FrejaRejectedError, FrejaTimeoutError,
+)
 
 HTTP_TIMEOUT = 30
+
+
+def _reject_redirect(response):
+    """Reject automatic authentication redirects before secrets can leave the host."""
+    status_code = getattr(response, "status_code", None)
+    if isinstance(status_code, int) and 300 <= status_code < 400:
+        raise AuthenticationError("Freja authentication returned an unexpected redirect.")
 
 
 def freja_login(session, freja_url, personnummer, poll_interval=2.0, timeout=60.0):
@@ -44,9 +55,10 @@ def _init_auth(session, freja_url, personnummer):
     base_url = urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
     init_url = f"{base_url}?action=init&userInput={pn}"
 
-    resp = session.post(init_url, timeout=HTTP_TIMEOUT)
+    resp = session.post(init_url, allow_redirects=False, timeout=HTTP_TIMEOUT)
+    _reject_redirect(resp)
     if not resp.ok:
-        raise FrejaError(f"Failed to initiate Freja auth: HTTP {resp.status_code}")
+        raise requests.HTTPError(response=resp)
 
 
 def _poll_until_done(session, freja_url, poll_interval, timeout):
@@ -60,7 +72,9 @@ def _poll_until_done(session, freja_url, poll_interval, timeout):
     start = time.monotonic()
     while time.monotonic() - start < timeout:
         time.sleep(poll_interval)
-        resp = session.get(poll_url, timeout=HTTP_TIMEOUT)
+        resp = session.get(poll_url, allow_redirects=False, timeout=HTTP_TIMEOUT)
+        _reject_redirect(resp)
+        resp.raise_for_status()
         status = _parse_status(resp.text)
 
         if status == "APPROVED":

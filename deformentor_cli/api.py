@@ -3,7 +3,9 @@
 import json
 import re
 import sys
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse, urlsplit
+
+from deformentor_cli.errors import UpstreamStateError
 
 BASE_URL = "https://hub.infomentor.se"
 HTTP_TIMEOUT = 30
@@ -46,8 +48,17 @@ def switch_child(session, pupil_id):
         headers=AJAX_HEADERS,
         timeout=HTTP_TIMEOUT,
     )
-    if resp.status_code != 500 and resp.status_code >= 400:
-        raise RuntimeError(f"SwitchPupil returned unexpected status {resp.status_code}")
+    if resp.status_code != 500:
+        resp.raise_for_status()
+    try:
+        selected = [
+            child for child in get_children(session)
+            if str(child["id"]) == str(pupil_id) and child.get("selected")
+        ]
+    except (KeyError, TypeError, RuntimeError) as error:
+        raise UpstreamStateError("InfoMentor did not confirm the requested child context.") from error
+    if len(selected) != 1:
+        raise UpstreamStateError("InfoMentor did not confirm the requested child context.")
 
 
 def get_notifications(session):
@@ -79,8 +90,12 @@ def get_messages(session, fetch_all_pages=False, max_pages=50):
     Returns:
         List of raw message dicts.
     """
+    if max_pages <= 0:
+        raise ValueError("max_pages must be a positive integer")
+
     all_items = []
     page = 1
+    more = False
     for _ in range(max_pages):
         resp = session.post(
             f"{BASE_URL}/Message/Message/GetMessages",
@@ -91,11 +106,15 @@ def get_messages(session, fetch_all_pages=False, max_pages=50):
         resp.raise_for_status()
         data = resp.json()
         all_items.extend(data["items"])
-        if not fetch_all_pages or not data.get("more"):
-            if not fetch_all_pages and data.get("more"):
+        more = bool(data.get("more"))
+        if not fetch_all_pages or not more:
+            if not fetch_all_pages and more:
                 print("Warning: additional message pages exist but were not fetched", file=sys.stderr)
             break
         page += 1
+    else:
+        if fetch_all_pages and more:
+            print(f"Warning: --max-pages limit of {max_pages} reached; more messages remain", file=sys.stderr)
     return all_items
 
 
@@ -146,26 +165,54 @@ def get_news_detail(session, news_id):
     return next((item for item in items if item["id"] == int(news_id)), None)
 
 
+def validate_attachment_url(url_path):
+    """Validate an InfoMentor attachment path without making a request."""
+    if not isinstance(url_path, str) or not url_path.startswith("/"):
+        raise ValueError("Attachment URL must start with '/' and be a relative InfoMentor path.")
+    decoded_url = url_path
+    for _ in range(4):
+        next_value = unquote(decoded_url)
+        if next_value == decoded_url:
+            break
+        decoded_url = next_value
+    else:
+        raise ValueError("Attachment URL has too many encoding layers.")
+    if any(ord(character) < 32 or ord(character) == 127 for character in decoded_url):
+        raise ValueError("Attachment URL contains control characters.")
+
+    parsed = urlsplit(decoded_url)
+    if parsed.scheme or parsed.netloc:
+        raise ValueError("Attachment URL must not include a scheme or host.")
+    if parsed.fragment:
+        raise ValueError("Attachment URL must not include a fragment.")
+
+    decoded_path = parsed.path
+    if "\\" in decoded_path or ".." in decoded_path.split("/"):
+        raise ValueError("Attachment URL contains path traversal.")
+    if not re.fullmatch(r"/Resources/Resource/Download/[^/]+", decoded_path):
+        raise ValueError("Attachment URL is not an expected InfoMentor download path.")
+    return url_path
+
+
 def get_attachment(session, url_path):
-    """Fetch an attachment by its URL path and return raw bytes.
+    """Fetch an attachment by its validated URL path and return raw bytes.
 
     url_path is the value from a news item's attachments[].url field,
     e.g. '/Resources/Resource/Download/2000001?api=IM2&ModuleType=NewsItem&ConnectionId=1000001'
 
     Raises:
-        ValueError: If url_path contains path traversal or is not a relative path.
+        ValueError: If url_path is not an expected relative attachment path.
     """
-    if not url_path.startswith("/"):
-        raise ValueError(f"Attachment URL must start with '/'. Got: {url_path}")
-    path_part = url_path.split("?")[0]
-    if ".." in path_part.split("/"):
-        raise ValueError(f"Attachment URL contains path traversal: {url_path}")
+    validate_attachment_url(url_path)
 
     resp = session.get(
         f"{BASE_URL}{url_path}",
         headers=AJAX_HEADERS,
+        allow_redirects=False,
         timeout=HTTP_TIMEOUT,
     )
+    if isinstance(resp.status_code, int) and 300 <= resp.status_code < 400:
+        raise UpstreamStateError("InfoMentor attachment endpoint returned an unexpected redirect.")
     resp.raise_for_status()
     return resp.content
 

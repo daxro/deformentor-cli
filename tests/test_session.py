@@ -4,48 +4,106 @@ import time
 import http.cookiejar
 import os
 import tempfile
+from datetime import timedelta
 from unittest.mock import MagicMock, patch, call
 
 import requests
 import requests.cookies
+import pytest
 
-from deformentor_cli.session import follow_redirects, parse_form_action, parse_hidden_fields, handle_saml_chain, login, save_session, load_session
+from deformentor_cli.errors import AuthenticationError
+from deformentor_cli.session import (
+    follow_redirects, parse_form_action, parse_hidden_fields, handle_saml_chain,
+    login, save_session, load_session, validate_auth_url, verify_authenticated,
+)
 
 
 class TestFollowRedirects:
     def test_follows_302_chain(self):
         session = MagicMock()
-        r1 = MagicMock(status_code=302, headers={"Location": "https://a.com/step2"}, url="https://a.com/step1")
-        r2 = MagicMock(status_code=302, headers={"Location": "https://b.com/step3"}, url="https://a.com/step2")
-        r3 = MagicMock(status_code=200, headers={}, url="https://b.com/step3")
+        r1 = MagicMock(status_code=302, headers={"Location": "https://sso.infomentor.se/step2"}, url="https://hub.infomentor.se/step1")
+        r2 = MagicMock(status_code=302, headers={"Location": "https://login001.stockholm.se/step3"}, url="https://sso.infomentor.se/step2")
+        r3 = MagicMock(status_code=200, headers={}, url="https://login001.stockholm.se/step3")
         session.get.side_effect = [r2, r3]
 
         result = follow_redirects(session, r1)
-        assert result.url == "https://b.com/step3"
+        assert result.url == "https://login001.stockholm.se/step3"
         assert session.get.call_count == 2
 
     def test_stops_on_200(self):
         session = MagicMock()
-        r1 = MagicMock(status_code=200, headers={}, url="https://a.com")
+        r1 = MagicMock(status_code=200, headers={}, url="https://hub.infomentor.se")
         result = follow_redirects(session, r1)
-        assert result.url == "https://a.com"
+        assert result.url == "https://hub.infomentor.se"
         assert session.get.call_count == 0
 
     def test_resolves_relative_location(self):
         session = MagicMock()
-        r1 = MagicMock(status_code=302, headers={"Location": "/next"}, url="https://a.com/page")
-        r2 = MagicMock(status_code=200, headers={}, url="https://a.com/next")
+        r1 = MagicMock(status_code=302, headers={"Location": "/next"}, url="https://hub.infomentor.se/page")
+        r2 = MagicMock(status_code=200, headers={}, url="https://hub.infomentor.se/next")
         session.get.return_value = r2
         result = follow_redirects(session, r1)
-        session.get.assert_called_with("https://a.com/next", allow_redirects=False, timeout=30)
+        session.get.assert_called_with("https://hub.infomentor.se/next", allow_redirects=False, timeout=30)
 
     def test_stops_after_max_hops(self):
         session = MagicMock()
-        redirect = MagicMock(status_code=302, headers={"Location": "https://a.com/loop"}, url="https://a.com/loop")
+        redirect = MagicMock(status_code=302, headers={"Location": "https://hub.infomentor.se/loop"}, url="https://hub.infomentor.se/loop")
         session.get.return_value = redirect
         result = follow_redirects(session, redirect, max_hops=5)
         assert session.get.call_count == 5
         assert result.status_code == 302
+
+    def test_rejects_redirect_to_unexpected_host(self):
+        session = MagicMock()
+        response = MagicMock(
+            status_code=302,
+            headers={"Location": "https://evil.example/collect"},
+            url="https://hub.infomentor.se/",
+        )
+
+        with pytest.raises(AuthenticationError, match="unexpected authentication URL"):
+            follow_redirects(session, response)
+
+        session.get.assert_not_called()
+
+    def test_303_changes_post_redirect_to_get(self):
+        session = MagicMock()
+        response = MagicMock(
+            status_code=303,
+            headers={"Location": "https://hub.infomentor.se/complete"},
+            url="https://sso.infomentor.se/saml",
+        )
+        final_response = MagicMock(status_code=200, headers={}, url="https://hub.infomentor.se/complete")
+        session.get.return_value = final_response
+
+        follow_redirects(session, response, method="POST", data={"SAMLResponse": "secret"})
+
+        session.get.assert_called_once_with(
+            "https://hub.infomentor.se/complete",
+            allow_redirects=False,
+            timeout=30,
+        )
+        session.post.assert_not_called()
+
+    def test_307_preserves_post_method_and_body(self):
+        session = MagicMock()
+        response = MagicMock(
+            status_code=307,
+            headers={"Location": "https://sso.infomentor.se/saml-next"},
+            url="https://sso.infomentor.se/saml",
+        )
+        final_response = MagicMock(status_code=200, headers={}, url="https://sso.infomentor.se/saml-next")
+        session.post.return_value = final_response
+
+        follow_redirects(session, response, method="POST", data={"SAMLResponse": "secret"})
+
+        session.post.assert_called_once_with(
+            "https://sso.infomentor.se/saml-next",
+            data={"SAMLResponse": "secret"},
+            allow_redirects=False,
+            timeout=30,
+        )
+        session.get.assert_not_called()
 
 
 class TestParseHiddenFields:
@@ -95,7 +153,7 @@ class TestHandleSamlChain:
 
         # First hop: SAML form with hidden fields
         html1 = '''
-        <form method="post" action="https://idp.example.com/saml">
+        <form method="post" action="https://sso.infomentor.se/saml">
             <input type="hidden" name="SAMLResponse" value="response1">
             <input type="hidden" name="RelayState" value="state1">
         </form>
@@ -104,20 +162,20 @@ class TestHandleSamlChain:
         # Second hop: final page, no form
         resp2 = MagicMock()
         resp2.status_code = 200
-        resp2.url = "https://app.example.com/home"
+        resp2.url = "https://hub.infomentor.se/home"
         resp2.text = "<html>Welcome</html>"
         resp2.headers = {}
 
         post_resp = MagicMock()
         post_resp.status_code = 200
-        post_resp.url = "https://app.example.com/home"
+        post_resp.url = "https://hub.infomentor.se/home"
         post_resp.text = "<html>Welcome</html>"
         post_resp.headers = {}
         session.post.return_value = post_resp
 
-        result_html, result_url = handle_saml_chain(session, html1, "https://login.example.com/sso")
+        result_html, result_url = handle_saml_chain(session, html1, "https://login003.stockholm.se/sso")
         session.post.assert_called_once_with(
-            "https://idp.example.com/saml",
+            "https://sso.infomentor.se/saml",
             data={"SAMLResponse": "response1", "RelayState": "state1"},
             allow_redirects=False,
             timeout=30,
@@ -127,7 +185,7 @@ class TestHandleSamlChain:
         session = MagicMock()
 
         html1 = '''
-        <form action="https://a.com/post">
+        <form action="https://sso.infomentor.se/post">
             <input type="hidden" name="token" value="abc">
         </form>
         '''
@@ -135,21 +193,21 @@ class TestHandleSamlChain:
         # POST returns 302
         post_resp = MagicMock()
         post_resp.status_code = 302
-        post_resp.headers = {"Location": "https://a.com/next"}
-        post_resp.url = "https://a.com/post"
+        post_resp.headers = {"Location": "https://hub.infomentor.se/next"}
+        post_resp.url = "https://sso.infomentor.se/post"
 
         # Redirect resolves to final page
         final_resp = MagicMock()
         final_resp.status_code = 200
         final_resp.headers = {}
-        final_resp.url = "https://a.com/next"
+        final_resp.url = "https://hub.infomentor.se/next"
         final_resp.text = "<html>done</html>"
 
         session.post.return_value = post_resp
         session.get.return_value = final_resp
 
-        result_html, result_url = handle_saml_chain(session, html1, "https://start.com")
-        assert result_url == "https://a.com/next"
+        result_html, result_url = handle_saml_chain(session, html1, "https://login003.stockholm.se/start")
+        assert result_url == "https://hub.infomentor.se/next"
 
     def test_no_form_returns_immediately(self):
         session = MagicMock()
@@ -158,6 +216,56 @@ class TestHandleSamlChain:
         assert result_html == html
         assert result_url == "https://page.com"
         assert session.post.call_count == 0
+
+    def test_rejects_saml_post_to_unexpected_host(self):
+        session = MagicMock()
+        html = '''
+        <form action="https://evil.example/collect">
+            <input type="hidden" name="SAMLResponse" value="secret">
+        </form>
+        '''
+
+        with pytest.raises(AuthenticationError, match="unexpected authentication URL"):
+            handle_saml_chain(session, html, "https://hub.infomentor.se/")
+
+        session.post.assert_not_called()
+
+
+class TestAuthUrlValidation:
+    @pytest.mark.parametrize("url", [
+        "http://hub.infomentor.se/",
+        "https://evil.example/",
+        "https://user:secret@hub.infomentor.se/",
+        "https://hub.infomentor.se:444/",
+    ])
+    def test_rejects_unexpected_auth_urls(self, url):
+        with pytest.raises(AuthenticationError, match="unexpected authentication URL"):
+            validate_auth_url(url)
+
+    def test_accepts_known_https_host(self):
+        assert validate_auth_url("https://login003.stockholm.se/path?state=secret") == (
+            "https://login003.stockholm.se/path?state=secret"
+        )
+
+
+class TestVerifyAuthenticated:
+    @pytest.mark.parametrize("body", ["not true", "<html>true</html>", "false"])
+    def test_rejects_non_exact_true_response(self, body):
+        session = MagicMock()
+        response = MagicMock()
+        response.text = body
+        session.post.return_value = response
+
+        with pytest.raises(AuthenticationError, match="did not confirm"):
+            verify_authenticated(session)
+
+    def test_accepts_true_with_whitespace(self):
+        session = MagicMock()
+        response = MagicMock()
+        response.text = " TRUE\n"
+        session.post.return_value = response
+
+        verify_authenticated(session)
 
 
 class TestLogin:
@@ -248,42 +356,69 @@ class TestLogin:
     @patch("deformentor_cli.session.freja_login")
     def test_login_returns_session(self, mock_freja):
         session = self._build_mock_session()
-        result = login("0001011234", _session=session)
+        result = login("0000000000", _session=session)
         assert result is session
 
     @patch("deformentor_cli.session.freja_login")
     def test_login_calls_freja_with_correct_args(self, mock_freja):
         session = self._build_mock_session()
-        login("0001011234", _session=session)
+        login("0000000000", _session=session)
         mock_freja.assert_called_once_with(
             session,
             "https://login003.stockholm.se/NECSadcfreja/authenticate/NECSadcfreja?TYPE=1&TARGET=x",
-            "0001011234",
+            "0000000000",
         )
 
     @patch("deformentor_cli.session.freja_login")
     def test_login_verifies_authentication(self, mock_freja):
         session = self._build_mock_session()
-        login("0001011234", _session=session)
+        login("0000000000", _session=session)
         # Last POST should be the isauthenticated check
         last_post = session.post.call_args_list[-1]
         assert "isauthenticated" in last_post[0][0]
+
+    @patch("deformentor_cli.session.save_session")
+    @patch("deformentor_cli.session.load_session", return_value=True)
+    @patch("deformentor_cli.session.freja_login")
+    def test_expired_cached_session_reauthenticates(self, mock_freja, mock_load, mock_save, tmp_path):
+        session = self._build_mock_session()
+        response = requests.Response()
+        response.status_code = 401
+        session.post.side_effect = [
+            requests.HTTPError(response=response),
+            *session.post.side_effect,
+        ]
+
+        result = login("0000000000", _session=session, session_path=str(tmp_path / "session.json"))
+
+        assert result is session
+        mock_freja.assert_called_once()
+
+    @patch("deformentor_cli.session.load_session", return_value=True)
+    def test_cached_session_server_error_propagates(self, mock_load):
+        session = MagicMock()
+        response = requests.Response()
+        response.status_code = 500
+        session.post.side_effect = requests.HTTPError(response=response)
+
+        with pytest.raises(requests.HTTPError):
+            login("0000000000", _session=session, session_path="session.json")
 
 
 class TestLoginQuiet:
     @patch("deformentor_cli.session.freja_login")
     def test_login_prints_progress_by_default(self, mock_freja, capsys):
         session = TestLogin()._build_mock_session()
-        login("0001011234", _session=session)
+        login("0000000000", _session=session)
         captured = capsys.readouterr()
         assert "logging in" in captured.err.lower()
 
     @patch("deformentor_cli.session.freja_login")
-    def test_login_suppresses_progress_when_quiet(self, mock_freja, capsys):
+    def test_login_keeps_human_approval_prompt_when_quiet(self, mock_freja, capsys):
         session = TestLogin()._build_mock_session()
-        login("0001011234", _session=session, quiet=True)
+        login("0000000000", _session=session, quiet=True)
         captured = capsys.readouterr()
-        assert "logging in" not in captured.err.lower()
+        assert "approve in freja" in captured.err.lower()
 
 
 class TestSessionPersistence:
@@ -332,6 +467,20 @@ class TestSessionPersistence:
         finally:
             os.unlink(path)
 
+    def test_load_wrong_json_shape_returns_false(self, tmp_path):
+        path = tmp_path / "session.json"
+        path.write_text('{"name": "not-a-cookie-list"}')
+        session = MagicMock()
+
+        assert load_session(session, path) is False
+
+    def test_load_invalid_cookie_shape_returns_false(self, tmp_path):
+        path = tmp_path / "session.json"
+        path.write_text('[{"name": "missing-required-fields"}]')
+        session = MagicMock()
+
+        assert load_session(session, path) is False
+
 
 class TestSessionFilePermissions:
     def test_save_session_creates_file_with_0600(self):
@@ -347,3 +496,40 @@ class TestSessionFilePermissions:
         finally:
             if os.path.exists(path):
                 os.unlink(path)
+
+    def test_save_session_replaces_permissive_file_with_0600(self, tmp_path):
+        path = tmp_path / "session.json"
+        path.write_text("[]")
+        os.chmod(path, 0o644)
+        session = MagicMock()
+        session.cookies = requests.cookies.RequestsCookieJar()
+
+        save_session(session, path)
+
+        assert os.stat(path).st_mode & 0o777 == 0o600
+
+
+class TestSanitizedHttpLogging:
+    def test_logs_metadata_without_query_or_personnummer(self, capsys):
+        import logging
+        from deformentor_cli.cli import _configure_debug
+        from deformentor_cli.session import _log_response
+
+        _configure_debug()
+        response = requests.Response()
+        response.status_code = 200
+        response.request = requests.Request(
+            "POST",
+            "https://login.example/auth?action=init&userInput=000000000000",
+            headers={"Authorization": "secret"},
+        ).prepare()
+        response.elapsed = timedelta(milliseconds=12)
+
+        _log_response(response)
+
+        output = capsys.readouterr().err
+        assert "POST https://login.example/auth -> 200" in output
+        assert "userInput" not in output
+        assert "000000000000" not in output
+        assert "Authorization" not in output
+        logging.getLogger("deformentor_cli.http").handlers.clear()

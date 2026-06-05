@@ -2,27 +2,29 @@ import json
 from unittest.mock import MagicMock
 
 import pytest
+import requests
 
 from deformentor_cli.api import get_children, switch_child, get_notifications, get_messages, get_attendance_detail, get_calendar_event, get_news_detail, get_meeting_availabilities, fetch_all_notifications, fetch_all_messages, get_attachment
 from deformentor_cli.api import get_time_registrations, get_time_registration_for_date, get_time_registration_comments, save_time_registration_comment, normalize_time_registration_comment
 from deformentor_cli.api import _normalize_type_name, _extract_id_from_url, _normalize_notification, _normalize_message, _normalize_message_summary
+from deformentor_cli.errors import UpstreamStateError
 
 
 MOCK_HOME_DATA = {
     "account": {
-        "currentUser": {"id": "1234567", "name": "Andersson, Erik"},
+        "currentUser": {"id": "1234567", "name": "Example, Guardian"},
         "pupils": [
             {
-                "name": "Andersson, Astrid",
-                "id": "2000010100",
-                "hybridMappingId": "STO-1001|2000010100|NEMANDI_SKOLI",
+                "name": "Example, Student A",
+                "id": "5001001",
+                "hybridMappingId": "STO-1001|5001001|NEMANDI_SKOLI",
                 "selected": True,
                 "switchPupilUrl": "https://hub.infomentor.se/Account/PupilSwitcher/SwitchPupil/5001001",
             },
             {
-                "name": "Andersson, Nils",
-                "id": "2100020200",
-                "hybridMappingId": "STO-1002|2100020200|NEMANDI_SKOLI",
+                "name": "Example, Student B",
+                "id": "5002002",
+                "hybridMappingId": "STO-1002|5002002|NEMANDI_SKOLI",
                 "selected": False,
                 "switchPupilUrl": "https://hub.infomentor.se/Account/PupilSwitcher/SwitchPupil/5002002",
             },
@@ -40,6 +42,16 @@ IMHome.home.init();
 """
 
 
+def _hub_response_with_selected(pupil_id):
+    data = json.loads(json.dumps(MOCK_HOME_DATA))
+    for pupil in data["account"]["pupils"]:
+        pupil["selected"] = pupil["id"] == pupil_id
+    response = MagicMock()
+    response.status_code = 200
+    response.text = f"<script>IMHome.home.homeData = {json.dumps(data)};</script>"
+    return response
+
+
 class TestGetChildren:
     def test_parses_children_from_hub_html(self):
         session = MagicMock()
@@ -51,15 +63,15 @@ class TestGetChildren:
 
         assert len(children) == 2
         assert children[0] == {
-            "name": "Andersson, Astrid",
+            "name": "Example, Student A",
             "id": "5001001",
-            "hybridMappingId": "STO-1001|2000010100|NEMANDI_SKOLI",
+            "hybridMappingId": "STO-1001|5001001|NEMANDI_SKOLI",
             "selected": True,
         }
         assert children[1] == {
-            "name": "Andersson, Nils",
+            "name": "Example, Student B",
             "id": "5002002",
-            "hybridMappingId": "STO-1002|2100020200|NEMANDI_SKOLI",
+            "hybridMappingId": "STO-1002|5002002|NEMANDI_SKOLI",
             "selected": False,
         }
 
@@ -89,18 +101,18 @@ class TestSwitchChild:
         session = MagicMock()
         resp = MagicMock()
         resp.status_code = 500
-        session.get.return_value = resp
+        session.get.side_effect = [resp, _hub_response_with_selected("5001001")]
 
         switch_child(session, "5001001")
 
-        url = session.get.call_args[0][0]
+        url = session.get.call_args_list[0][0][0]
         assert "/Account/PupilSwitcher/SwitchPupil/5001001" in url
 
     def test_does_not_raise_on_500(self):
         session = MagicMock()
         resp = MagicMock()
         resp.status_code = 500
-        session.get.return_value = resp
+        session.get.side_effect = [resp, _hub_response_with_selected("5001001")]
 
         switch_child(session, "5001001")  # should not raise
 
@@ -108,20 +120,30 @@ class TestSwitchChild:
         session = MagicMock()
         resp = MagicMock()
         resp.status_code = 500
-        session.get.return_value = resp
+        session.get.side_effect = [resp, _hub_response_with_selected("5001001")]
 
         switch_child(session, "5001001")
 
-        headers = session.get.call_args[1].get("headers", {})
+        headers = session.get.call_args_list[0][1].get("headers", {})
         assert headers.get("X-Requested-With") == "XMLHttpRequest"
 
     def test_raises_on_non_500_error(self):
         session = MagicMock()
         resp = MagicMock()
         resp.status_code = 401
+        resp.raise_for_status.side_effect = requests.HTTPError(response=resp)
         session.get.return_value = resp
 
-        with pytest.raises(Exception, match="unexpected status 401"):
+        with pytest.raises(requests.HTTPError):
+            switch_child(session, "5001001")
+
+    def test_raises_when_switch_is_not_confirmed(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.status_code = 500
+        session.get.side_effect = [resp, _hub_response_with_selected("5002002")]
+
+        with pytest.raises(UpstreamStateError, match="did not confirm"):
             switch_child(session, "5001001")
 
 
@@ -182,7 +204,7 @@ class TestGetMessagesAllPages:
         assert len(result) == 2
         assert session.post.call_count == 2
 
-    def test_respects_page_limit(self):
+    def test_respects_page_limit_and_warns_when_more_remain(self, capsys):
         session = MagicMock()
         page1_resp = MagicMock()
         page1_resp.json.return_value = {"items": [{"id": 1, "messageSubject": "A", "timeSent": "2026-03-28"}], "page": 0, "more": True}
@@ -195,6 +217,11 @@ class TestGetMessagesAllPages:
         result = get_messages(session, fetch_all_pages=True, max_pages=2)
         assert len(result) == 2
         assert session.post.call_count == 2
+        assert "--max-pages limit of 2 reached" in capsys.readouterr().err
+
+    def test_rejects_non_positive_page_limit(self):
+        with pytest.raises(ValueError, match="positive"):
+            get_messages(MagicMock(), fetch_all_pages=True, max_pages=0)
 
     def test_default_fetches_single_page(self):
         session = MagicMock()
@@ -297,13 +324,13 @@ class TestTimeRegistrationApi:
     def test_get_time_registration_comments_posts_expected_payload(self):
         session = MagicMock()
         resp = MagicMock()
-        resp.json.return_value = [{"parentCommentId": 10, "userComment": "Hämtas av: David"}]
+        resp.json.return_value = [{"parentCommentId": 10, "userComment": "Hämtas av: Guardian"}]
         resp.raise_for_status = MagicMock()
         session.post.return_value = resp
 
         result = get_time_registration_comments(session, "2026-06-05")
 
-        assert result == [{"parentCommentId": 10, "userComment": "Hämtas av: David"}]
+        assert result == [{"parentCommentId": 10, "userComment": "Hämtas av: Guardian"}]
         url = session.post.call_args[0][0]
         kwargs = session.post.call_args[1]
         assert "/TimeRegistration/TimeRegistration/GetComments/" in url
@@ -354,7 +381,7 @@ class TestSaveTimeRegistrationComment:
         resp.raise_for_status = MagicMock()
         session.post.return_value = resp
 
-        result = save_time_registration_comment(session, 0, "Hämtas av: Julia Welles", 123456)
+        result = save_time_registration_comment(session, 0, "Hämtas av: Example Guardian", 123456)
 
         assert result == {"success": True}
         url = session.post.call_args[0][0]
@@ -362,7 +389,7 @@ class TestSaveTimeRegistrationComment:
         assert "/TimeRegistration/TimeRegistration/SaveComment/" in url
         assert kwargs["json"] == {
             "commentId": 0,
-            "commentText": "Hämtas av: Julia Welles",
+            "commentText": "Hämtas av: Example Guardian",
             "timeRegistrationId": 123456,
         }
         assert kwargs["headers"]["X-Requested-With"] == "XMLHttpRequest"
@@ -374,7 +401,7 @@ class TestSaveTimeRegistrationComment:
         resp.raise_for_status = MagicMock()
         session.post.return_value = resp
 
-        save_time_registration_comment(session, 10, "Hämtas av: Julia Welles", 123456)
+        save_time_registration_comment(session, 10, "Hämtas av: Example Guardian", 123456)
 
         assert session.post.call_args[1]["json"]["commentId"] == 10
 
@@ -386,7 +413,7 @@ class TestSaveTimeRegistrationComment:
         session.post.return_value = resp
 
         with pytest.raises(RuntimeError, match="denied"):
-            save_time_registration_comment(session, 0, "Hämtas av: Julia Welles", 123456)
+            save_time_registration_comment(session, 0, "Hämtas av: Example Guardian", 123456)
 
     def test_http_errors_bubble_up(self):
         session = MagicMock()
@@ -395,17 +422,17 @@ class TestSaveTimeRegistrationComment:
         session.post.return_value = resp
 
         with pytest.raises(Exception, match="500"):
-            save_time_registration_comment(session, 0, "Hämtas av: Julia Welles", 123456)
+            save_time_registration_comment(session, 0, "Hämtas av: Example Guardian", 123456)
 
 
 class TestNormalizeTimeRegistrationComment:
     def test_returns_first_non_empty_comment_with_owner_fields(self):
         raw = [
-            {"parentCommentId": 11, "userComment": "", "owner": "Romell, Lotta"},
+            {"parentCommentId": 11, "userComment": "", "owner": "Example, Guardian B"},
             {
                 "parentCommentId": 12,
-                "userComment": "Hämtas av: Lotta",
-                "owner": "Romell, Lotta",
+                "userComment": "Hämtas av: Example Guardian",
+                "owner": "Example, Guardian B",
                 "canEditComment": False,
             },
         ]
@@ -414,8 +441,8 @@ class TestNormalizeTimeRegistrationComment:
 
         assert result["found"] is True
         assert result["parentCommentId"] == 12
-        assert result["userComment"] == "Hämtas av: Lotta"
-        assert result["owner"] == "Romell, Lotta"
+        assert result["userComment"] == "Hämtas av: Example Guardian"
+        assert result["owner"] == "Example, Guardian B"
         assert result["canEditComment"] is False
 
     def test_returns_not_found_shape_when_no_comment_exists(self):
@@ -540,18 +567,18 @@ class TestFetchAllNotifications:
 
         home_data = {
             "account": {
-                "currentUser": {"id": "1234567", "name": "Andersson, Erik"},
+                "currentUser": {"id": "1234567", "name": "Example, Guardian"},
                 "pupils": [
                     {
-                        "name": "Andersson, Astrid",
-                        "id": "2000010100",
+                        "name": "Example, Student A",
+                        "id": "5001001",
                         "hybridMappingId": "map-111",
                         "selected": True,
                         "switchPupilUrl": "https://hub.infomentor.se/Account/PupilSwitcher/SwitchPupil/5001001",
                     },
                     {
-                        "name": "Andersson, Nils",
-                        "id": "2100020200",
+                        "name": "Example, Student B",
+                        "id": "5002002",
                         "hybridMappingId": "map-222",
                         "selected": False,
                         "switchPupilUrl": "https://hub.infomentor.se/Account/PupilSwitcher/SwitchPupil/5002002",
@@ -582,10 +609,10 @@ class TestFetchAllNotifications:
         ]
 
         felix_messages = [
-            {"id": 100, "messageSubject": "Hej Astrid", "timeSent": "2026-03-28"},
+            {"id": 100, "messageSubject": "Hej Student A", "timeSent": "2026-03-28"},
         ]
         viggo_messages = [
-            {"id": 200, "messageSubject": "Hej Nils", "timeSent": "2026-03-27"},
+            {"id": 200, "messageSubject": "Hej Student B", "timeSent": "2026-03-27"},
         ]
 
         hub_resp = MagicMock()
@@ -594,7 +621,13 @@ class TestFetchAllNotifications:
         switch_resp = MagicMock()
         switch_resp.status_code = 500
 
-        session.get.side_effect = [hub_resp, switch_resp, switch_resp]
+        session.get.side_effect = [
+            hub_resp,
+            switch_resp,
+            _hub_response_with_selected("5001001"),
+            switch_resp,
+            _hub_response_with_selected("5002002"),
+        ]
 
         notif_resp = MagicMock()
         notif_resp.json.return_value = {"notifications": raw_notifications}
@@ -613,9 +646,9 @@ class TestFetchAllNotifications:
         session = self._mock_session()
         result = fetch_all_notifications(session)
         assert len(result) == 2
-        assert result[0]["child"] == "Andersson, Astrid"
+        assert result[0]["child"] == "Example, Student A"
         assert result[0]["child_id"] == "5001001"
-        assert result[1]["child"] == "Andersson, Nils"
+        assert result[1]["child"] == "Example, Student B"
         assert result[1]["child_id"] == "5002002"
 
     def test_partitions_notifications_by_child(self):
@@ -645,8 +678,12 @@ class TestFetchAllNotifications:
     def test_switches_child_for_messages(self):
         session = self._mock_session()
         fetch_all_notifications(session)
-        assert session.get.call_count == 3
-        switch_urls = [c[0][0] for c in session.get.call_args_list[1:]]
+        assert session.get.call_count == 5
+        switch_urls = [
+            call_args[0][0]
+            for call_args in session.get.call_args_list
+            if "SwitchPupil" in call_args[0][0]
+        ]
         assert any("5001001" in u for u in switch_urls)
         assert any("5002002" in u for u in switch_urls)
 
@@ -657,8 +694,8 @@ class TestFetchAllNotifications:
                 "currentUser": {"id": "1", "name": "Test"},
                 "pupils": [
                     {
-                        "name": "Andersson, Astrid",
-                        "id": "2000010100",
+                        "name": "Example, Student A",
+                        "id": "5001001",
                         "hybridMappingId": "map-111",
                         "selected": True,
                         "switchPupilUrl": "https://hub.infomentor.se/Account/PupilSwitcher/SwitchPupil/5001001",
@@ -670,7 +707,7 @@ class TestFetchAllNotifications:
         hub_resp.text = f"<script>IMHome.home.homeData = {json.dumps(home_data)};</script>"
         switch_resp = MagicMock()
         switch_resp.status_code = 500
-        session.get.side_effect = [hub_resp, switch_resp]
+        session.get.side_effect = [hub_resp, switch_resp, _hub_response_with_selected("5001001")]
 
         notif_resp = MagicMock()
         notif_resp.json.return_value = {
@@ -700,8 +737,8 @@ class TestFetchAllNotifications:
                 "currentUser": {"id": "1", "name": "Test"},
                 "pupils": [
                     {
-                        "name": "Andersson, Astrid",
-                        "id": "2000010100",
+                        "name": "Example, Student A",
+                        "id": "5001001",
                         "hybridMappingId": "map-111",
                         "selected": True,
                         "switchPupilUrl": "https://hub.infomentor.se/Account/PupilSwitcher/SwitchPupil/5001001",
@@ -713,7 +750,7 @@ class TestFetchAllNotifications:
         hub_resp.text = f"<script>IMHome.home.homeData = {json.dumps(home_data)};</script>"
         switch_resp = MagicMock()
         switch_resp.status_code = 500
-        session.get.side_effect = [hub_resp, switch_resp]
+        session.get.side_effect = [hub_resp, switch_resp, _hub_response_with_selected("5001001")]
 
         notif_resp = MagicMock()
         notif_resp.raise_for_status = MagicMock()
@@ -745,14 +782,14 @@ class TestNormalizeMessageSummary:
             "id": 11880746,
             "messageSubject": "Viktig info",
             "timeSent": "2026-03-28",
-            "sentUser": {"displayName": "Larsson, Emelie", "id": 123, "type": "Teacher"},
+            "sentUser": {"displayName": "Example, Teacher", "id": 123, "type": "Teacher"},
             "isNew": False,
         }
         result = _normalize_message_summary(raw)
         assert result == {
             "id": "11880746",
             "subject": "Viktig info",
-            "from": "Larsson, Emelie",
+            "from": "Example, Teacher",
             "date": "2026-03-28",
         }
 
@@ -772,18 +809,18 @@ class TestFetchAllMessages:
         session = MagicMock()
         home_data = {
             "account": {
-                "currentUser": {"id": "1234567", "name": "Andersson, Erik"},
+                "currentUser": {"id": "1234567", "name": "Example, Guardian"},
                 "pupils": [
                     {
-                        "name": "Andersson, Astrid",
-                        "id": "2000010100",
+                        "name": "Example, Student A",
+                        "id": "5001001",
                         "hybridMappingId": "map-111",
                         "selected": True,
                         "switchPupilUrl": "https://hub.infomentor.se/Account/PupilSwitcher/SwitchPupil/5001001",
                     },
                     {
-                        "name": "Andersson, Nils",
-                        "id": "2100020200",
+                        "name": "Example, Student B",
+                        "id": "5002002",
                         "hybridMappingId": "map-222",
                         "selected": False,
                         "switchPupilUrl": "https://hub.infomentor.se/Account/PupilSwitcher/SwitchPupil/5002002",
@@ -798,12 +835,18 @@ class TestFetchAllMessages:
         switch_resp = MagicMock()
         switch_resp.status_code = 500
 
-        session.get.side_effect = [hub_resp, switch_resp, switch_resp]
+        session.get.side_effect = [
+            hub_resp,
+            switch_resp,
+            _hub_response_with_selected("5001001"),
+            switch_resp,
+            _hub_response_with_selected("5002002"),
+        ]
 
         felix_msg_resp = MagicMock()
         felix_msg_resp.json.return_value = {
             "items": [
-                {"id": 100, "messageSubject": "Hej Astrid", "timeSent": "2026-03-28"},
+                {"id": 100, "messageSubject": "Hej Student A", "timeSent": "2026-03-28"},
                 {"id": 101, "messageSubject": "Gamla", "timeSent": "2026-03-20"},
             ],
             "page": 0,
@@ -814,7 +857,7 @@ class TestFetchAllMessages:
         viggo_msg_resp = MagicMock()
         viggo_msg_resp.json.return_value = {
             "items": [
-                {"id": 200, "messageSubject": "Hej Nils", "timeSent": "2026-03-27"},
+                {"id": 200, "messageSubject": "Hej Student B", "timeSent": "2026-03-27"},
             ],
             "page": 0,
             "more": False,
@@ -828,9 +871,9 @@ class TestFetchAllMessages:
         session = self._mock_session()
         result = fetch_all_messages(session)
         assert len(result) == 2
-        assert result[0]["child"] == "Andersson, Astrid"
+        assert result[0]["child"] == "Example, Student A"
         assert result[0]["child_id"] == "5001001"
-        assert result[1]["child"] == "Andersson, Nils"
+        assert result[1]["child"] == "Example, Student B"
         assert result[1]["child_id"] == "5002002"
 
     def test_returns_formatted_messages(self):
@@ -838,7 +881,7 @@ class TestFetchAllMessages:
         result = fetch_all_messages(session)
         msg = result[0]["messages"][0]
         assert msg["id"] == "100"
-        assert msg["subject"] == "Hej Astrid"
+        assert msg["subject"] == "Hej Student A"
         assert msg["date"] == "2026-03-28"
 
     def test_sorted_by_date_descending(self):
@@ -851,7 +894,11 @@ class TestFetchAllMessages:
     def test_switches_child_for_each(self):
         session = self._mock_session()
         fetch_all_messages(session)
-        switch_urls = [c[0][0] for c in session.get.call_args_list[1:]]
+        switch_urls = [
+            call_args[0][0]
+            for call_args in session.get.call_args_list
+            if "SwitchPupil" in call_args[0][0]
+        ]
         assert any("5001001" in u for u in switch_urls)
         assert any("5002002" in u for u in switch_urls)
 
@@ -943,6 +990,17 @@ class TestGetAttachment:
         with pytest.raises(Exception, match="404"):
             get_attachment(session, "/Resources/Resource/Download/bad")
 
+    def test_rejects_redirect_without_following_it(self):
+        session = MagicMock()
+        response = MagicMock()
+        response.status_code = 302
+        session.get.return_value = response
+
+        with pytest.raises(UpstreamStateError, match="unexpected redirect"):
+            get_attachment(session, "/Resources/Resource/Download/123")
+
+        assert session.get.call_args.kwargs["allow_redirects"] is False
+
 
 class TestAttachmentUrlValidation:
     def test_rejects_path_traversal(self):
@@ -954,6 +1012,21 @@ class TestAttachmentUrlValidation:
         session = MagicMock()
         with pytest.raises(ValueError, match="must start with"):
             get_attachment(session, "https://evil.com/file")
+
+    @pytest.mark.parametrize("url", [
+        "//evil.example/Resources/Resource/Download/123",
+        "/Resources/Resource/Download/123#fragment",
+        "/Resources/Resource/Download/../secret",
+        "/Resources/Resource/Download/123\nheader",
+        "/Resources/Resource/Download/123%0aheader",
+        "/Resources/Resource/Download/%252e%252e%252fsecret",
+        "/Resources/Resource/Download/123%250aheader",
+        "/Resources/Resource/Download/123%2523fragment",
+        "/unexpected/Download/123",
+    ])
+    def test_rejects_unsafe_or_unexpected_paths(self, url):
+        with pytest.raises(ValueError):
+            get_attachment(MagicMock(), url)
 
     def test_accepts_valid_resource_path(self):
         session = MagicMock()
