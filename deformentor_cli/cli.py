@@ -29,7 +29,8 @@ from deformentor_cli.api import (
     validate_attachment_url,
 )
 from deformentor_cli.paths import CONFIG_FILE, SESSION_FILE, write_private_text
-from deformentor_cli.session import login, new_session, load_session, verify_authenticated
+from deformentor_cli.session import login, new_session, load_session, save_session, verify_authenticated
+from stockholm_freja import FrejaInputError, validate_personnummer
 
 _LOGO_LINES = [
     r"    _      __                       _               ___ _    ___ ",
@@ -87,8 +88,10 @@ _DEFAULT_SINCE_DAYS = 30
 
 def _validate_personnummer(personnummer, stored=False):
     """Validate a personnummer without echoing it in errors."""
-    if isinstance(personnummer, str) and re.fullmatch(r"[0-9]{12}", personnummer):
-        return personnummer
+    try:
+        return validate_personnummer(personnummer)
+    except FrejaInputError:
+        pass
     if stored:
         emit_error(
             "invalid_config",
@@ -288,6 +291,20 @@ def _write_config(content, quiet=False):
     _progress(f"Saved to {CONFIG_FILE}", quiet)
 
 
+def _persist_setup_state(personnummer, session, quiet=False):
+    """Replace setup state only after login, restoring config on save failure."""
+    previous_config = CONFIG_FILE.read_text() if CONFIG_FILE.exists() else None
+    try:
+        _write_config(f"PERSONNUMMER={personnummer}\n", quiet)
+        save_session(session, str(SESSION_FILE))
+    except Exception:
+        if previous_config is None:
+            CONFIG_FILE.unlink(missing_ok=True)
+        else:
+            write_private_text(CONFIG_FILE, previous_config)
+        raise
+
+
 def _progress(message, quiet=False):
     """Print progress message to stderr unless quiet mode is enabled."""
     if not quiet:
@@ -485,7 +502,7 @@ def _run_cli():
     subparsers = parser.add_subparsers(dest="command", title="commands", parser_class=_DeformentorParser)
     setup_parser = subparsers.add_parser("setup", parents=[_base_flags], help="Configure login",
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    setup_parser.add_argument("--personnummer", help="Personnummer to use for non-interactive setup")
+    setup_parser.add_argument("--personnummer", help="Personnummer to use for setup")
     notif_parser = subparsers.add_parser("notifications", parents=[_global_flags],
         help="Fetch notifications and messages for all children",
         epilog="""examples:
@@ -627,20 +644,6 @@ safety:
         emit_error("internal_error", "Unexpected internal error.", exit_code=EXIT_ERROR)
 
 
-def _clear_session_if_identity_changed(existing_personnummer, personnummer):
-    """Remove a saved session before switching configured identity."""
-    if existing_personnummer == personnummer or not SESSION_FILE.exists():
-        return
-    try:
-        SESSION_FILE.unlink()
-    except OSError:
-        emit_error(
-            "setup_failed",
-            "Could not delete existing session before changing personnummer.",
-            exit_code=EXIT_ERROR,
-        )
-
-
 def _setup(quiet=False, no_input=False, personnummer=None):
     if not no_input and sys.stdin.isatty():
         _maybe_print_logo()
@@ -655,9 +658,8 @@ def _setup(quiet=False, no_input=False, personnummer=None):
                 exit_code=EXIT_USAGE,
             )
         _validate_personnummer(personnummer)
-        _clear_session_if_identity_changed(existing, personnummer)
-        _write_config(f"PERSONNUMMER={personnummer}\n", quiet)
-        login(personnummer, session_path=str(SESSION_FILE), quiet=quiet)
+        session = login(personnummer, quiet=quiet)
+        _persist_setup_state(personnummer, session, quiet)
         _progress("Authenticated.", quiet)
         _print_status(_get_status())
         return
@@ -667,19 +669,14 @@ def _setup(quiet=False, no_input=False, personnummer=None):
         print("Already configured.", file=sys.stderr)
         answer = input("Overwrite? [y/N] ").strip().lower()
         if answer != "y":
-            login(existing, session_path=str(SESSION_FILE), quiet=quiet)
-            _progress("Authenticated.", quiet)
-            _print_status(_get_status())
             return
 
     if personnummer is None:
         personnummer = input("Personnummer (12 digits): ").strip()
     _validate_personnummer(personnummer)
 
-    _clear_session_if_identity_changed(existing, personnummer)
-    _write_config(f"PERSONNUMMER={personnummer}\n", quiet)
-
-    login(personnummer, session_path=str(SESSION_FILE), quiet=quiet)
+    session = login(personnummer, quiet=quiet)
+    _persist_setup_state(personnummer, session, quiet)
     _progress("Authenticated.", quiet)
     _print_status(_get_status())
 
