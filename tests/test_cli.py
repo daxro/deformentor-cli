@@ -1051,6 +1051,135 @@ class TestNonInteractiveSetup:
         err = json.loads(capsys.readouterr().err)
         assert err["error"] == "setup_required"
 
+    @patch("deformentor_cli.cli._get_status")
+    @patch("deformentor_cli.cli._print_status")
+    @patch("deformentor_cli.cli.login")
+    def test_explicit_personnummer_wins_over_env_var(
+        self, mock_login, mock_print_status, mock_status, monkeypatch, tmp_path
+    ):
+        from deformentor_cli.cli import _setup
+
+        config_file = tmp_path / "config.env"
+        monkeypatch.setattr("deformentor_cli.cli.CONFIG_FILE", config_file)
+        monkeypatch.setenv("PERSONNUMMER", "111111111111")
+        monkeypatch.setattr("sys.stdin", MagicMock(isatty=lambda: True))
+        mock_status.return_value = {"configured": True, "session": "valid", "children": []}
+
+        _setup(personnummer="222222222222")
+
+        assert config_file.read_text() == "PERSONNUMMER=222222222222\n"
+        mock_login.assert_called_once()
+        assert mock_login.call_args.args[0] == "222222222222"
+
+    @patch("deformentor_cli.cli._get_status")
+    @patch("deformentor_cli.cli._print_status")
+    @patch("deformentor_cli.cli.login")
+    def test_explicit_personnummer_with_no_input(
+        self, mock_login, mock_print_status, mock_status, monkeypatch, tmp_path
+    ):
+        from deformentor_cli.cli import _setup
+
+        config_file = tmp_path / "config.env"
+        monkeypatch.setattr("deformentor_cli.cli.CONFIG_FILE", config_file)
+        monkeypatch.setattr("sys.stdin", MagicMock(isatty=lambda: True))
+        mock_status.return_value = {"configured": True, "session": "valid", "children": []}
+
+        _setup(no_input=True, personnummer="222222222222")
+
+        assert config_file.read_text() == "PERSONNUMMER=222222222222\n"
+        mock_login.assert_called_once()
+
+    @patch("deformentor_cli.cli._get_status")
+    @patch("deformentor_cli.cli._print_status")
+    @patch("deformentor_cli.cli.login")
+    @patch("deformentor_cli.cli._maybe_print_logo")
+    def test_interactive_setup_prompts_when_no_noninteractive_input(
+        self, mock_logo, mock_login, mock_print_status, mock_status, monkeypatch, tmp_path
+    ):
+        from deformentor_cli.cli import _setup
+
+        monkeypatch.setattr("deformentor_cli.cli.CONFIG_FILE", tmp_path / "config.env")
+        monkeypatch.setattr("sys.stdin", MagicMock(isatty=lambda: True))
+        mock_status.return_value = {"configured": True, "session": "valid", "children": []}
+
+        with patch("builtins.input", return_value="222222222222") as mock_input:
+            _setup()
+
+        mock_logo.assert_called_once()
+        mock_input.assert_called_once_with("Personnummer (12 digits): ")
+        mock_login.assert_called_once()
+
+    @patch("deformentor_cli.cli._get_status")
+    @patch("deformentor_cli.cli._print_status")
+    @patch("deformentor_cli.cli.login")
+    def test_changing_personnummer_deletes_existing_session(
+        self, mock_login, mock_print_status, mock_status, monkeypatch, tmp_path
+    ):
+        from deformentor_cli.cli import _setup
+
+        config_file = tmp_path / "config.env"
+        session_file = tmp_path / "session.json"
+        config_file.write_text("PERSONNUMMER=111111111111\n")
+        session_file.write_text("{}")
+        monkeypatch.setattr("deformentor_cli.cli.CONFIG_FILE", config_file)
+        monkeypatch.setattr("deformentor_cli.cli.SESSION_FILE", session_file)
+        monkeypatch.setattr("sys.stdin", MagicMock(isatty=lambda: True))
+        mock_status.return_value = {"configured": True, "session": "valid", "children": []}
+
+        _setup(personnummer="222222222222")
+
+        assert not session_file.exists()
+        assert config_file.read_text() == "PERSONNUMMER=222222222222\n"
+        mock_login.assert_called_once()
+
+    @patch("deformentor_cli.cli._get_status")
+    @patch("deformentor_cli.cli._print_status")
+    @patch("deformentor_cli.cli.login")
+    def test_same_personnummer_keeps_existing_session(
+        self, mock_login, mock_print_status, mock_status, monkeypatch, tmp_path
+    ):
+        from deformentor_cli.cli import _setup
+
+        config_file = tmp_path / "config.env"
+        session_file = tmp_path / "session.json"
+        config_file.write_text("PERSONNUMMER=111111111111\n")
+        session_file.write_text("{}")
+        monkeypatch.setattr("deformentor_cli.cli.CONFIG_FILE", config_file)
+        monkeypatch.setattr("deformentor_cli.cli.SESSION_FILE", session_file)
+        monkeypatch.setattr("sys.stdin", MagicMock(isatty=lambda: True))
+        mock_status.return_value = {"configured": True, "session": "valid", "children": []}
+
+        _setup(personnummer="111111111111")
+
+        assert session_file.exists()
+        mock_login.assert_called_once()
+
+    @patch("deformentor_cli.cli._get_status")
+    @patch("deformentor_cli.cli._print_status")
+    @patch("deformentor_cli.cli.login")
+    def test_session_delete_failure_does_not_change_config(
+        self, mock_login, mock_print_status, mock_status, monkeypatch, tmp_path, capsys
+    ):
+        from deformentor_cli.cli import _setup
+
+        config_file = tmp_path / "config.env"
+        session_file = tmp_path / "session.json"
+        config_file.write_text("PERSONNUMMER=111111111111\n")
+        session_file.write_text("{}")
+        monkeypatch.setattr("deformentor_cli.cli.CONFIG_FILE", config_file)
+        monkeypatch.setattr("deformentor_cli.cli.SESSION_FILE", session_file)
+        monkeypatch.setattr("sys.stdin", MagicMock(isatty=lambda: True))
+        mock_status.return_value = {"configured": True, "session": "valid", "children": []}
+
+        with patch.object(type(session_file), "unlink", side_effect=OSError("Permission denied")):
+            with pytest.raises(SystemExit) as exc_info:
+                _setup(personnummer="222222222222")
+
+        assert exc_info.value.code == 1
+        assert config_file.read_text() == "PERSONNUMMER=111111111111\n"
+        mock_login.assert_not_called()
+        assert json.loads(capsys.readouterr().err)["error"] == "setup_failed"
+
 
 class TestStatusJson:
     @patch("deformentor_cli.cli.get_children")
@@ -1195,6 +1324,14 @@ class TestHelpExamples:
             main()
         captured = capsys.readouterr()
         assert "examples:" in captured.out.lower()
+
+    def test_setup_help_has_personnummer_flag(self, capsys):
+        from deformentor_cli.cli import main
+        import sys
+        with pytest.raises(SystemExit):
+            sys.argv = ["deformentor", "setup", "--help"]
+            main()
+        assert "--personnummer" in capsys.readouterr().out
 
     def test_notifications_help_has_examples(self, capsys):
         from deformentor_cli.cli import main
@@ -1535,6 +1672,17 @@ class TestNoInputFlag:
             mock_status.return_value = {"configured": True, "session": "valid", "children": []}
             _setup(quiet=True, no_input=True)
         mock_login.assert_called_once()
+
+
+class TestSetupFlag:
+    @patch("deformentor_cli.cli._setup")
+    def test_setup_personnummer_is_passed_to_setup(self, mock_setup, monkeypatch):
+        from deformentor_cli.cli import main
+
+        monkeypatch.setattr(sys, "argv", ["deformentor", "setup", "--personnummer", "000000000000"])
+        main()
+
+        mock_setup.assert_called_once_with(quiet=False, no_input=False, personnummer="000000000000")
 
 
 class TestGlobalFlagPosition:

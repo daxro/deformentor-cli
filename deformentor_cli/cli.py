@@ -483,8 +483,9 @@ def _run_cli():
                                default=argparse.SUPPRESS, help="Comma-separated list of fields to include in output")
 
     subparsers = parser.add_subparsers(dest="command", title="commands", parser_class=_DeformentorParser)
-    subparsers.add_parser("setup", parents=[_base_flags], help="Interactively configure login",
+    setup_parser = subparsers.add_parser("setup", parents=[_base_flags], help="Configure login",
         formatter_class=argparse.RawDescriptionHelpFormatter)
+    setup_parser.add_argument("--personnummer", help="Personnummer to use for non-interactive setup")
     notif_parser = subparsers.add_parser("notifications", parents=[_global_flags],
         help="Fetch notifications and messages for all children",
         epilog="""examples:
@@ -566,7 +567,11 @@ safety:
         if getattr(args, "debug", False):
             _configure_debug()
         if args.command == "setup":
-            _setup(quiet=args.quiet, no_input=getattr(args, "no_input", False))
+            _setup(
+                quiet=args.quiet,
+                no_input=getattr(args, "no_input", False),
+                personnummer=getattr(args, "personnummer", None),
+            )
         elif args.command == "notifications":
             _notifications(args)
         elif args.command == "messages":
@@ -622,10 +627,26 @@ safety:
         emit_error("internal_error", "Unexpected internal error.", exit_code=EXIT_ERROR)
 
 
-def _setup(quiet=False, no_input=False):
+def _clear_session_if_identity_changed(existing_personnummer, personnummer):
+    """Remove a saved session before switching configured identity."""
+    if existing_personnummer == personnummer or not SESSION_FILE.exists():
+        return
+    try:
+        SESSION_FILE.unlink()
+    except OSError:
+        emit_error(
+            "setup_failed",
+            "Could not delete existing session before changing personnummer.",
+            exit_code=EXIT_ERROR,
+        )
+
+
+def _setup(quiet=False, no_input=False, personnummer=None):
     if not no_input and sys.stdin.isatty():
         _maybe_print_logo()
-    if no_input or not sys.stdin.isatty():
+    existing = dotenv_values(CONFIG_FILE).get("PERSONNUMMER") if CONFIG_FILE.exists() else None
+
+    if personnummer is None and (no_input or not sys.stdin.isatty()):
         personnummer = os.environ.get("PERSONNUMMER")
         if not personnummer:
             emit_error(
@@ -634,29 +655,31 @@ def _setup(quiet=False, no_input=False):
                 exit_code=EXIT_USAGE,
             )
         _validate_personnummer(personnummer)
+        _clear_session_if_identity_changed(existing, personnummer)
         _write_config(f"PERSONNUMMER={personnummer}\n", quiet)
         login(personnummer, session_path=str(SESSION_FILE), quiet=quiet)
         _progress("Authenticated.", quiet)
         _print_status(_get_status())
         return
 
-    existing = dotenv_values(CONFIG_FILE).get("PERSONNUMMER") if CONFIG_FILE.exists() else None
-    if existing:
+    if existing and personnummer is None:
         _validate_personnummer(existing, stored=True)
         print("Already configured.", file=sys.stderr)
         answer = input("Overwrite? [y/N] ").strip().lower()
         if answer != "y":
-            login(existing, session_path=str(SESSION_FILE))
+            login(existing, session_path=str(SESSION_FILE), quiet=quiet)
             _progress("Authenticated.", quiet)
             _print_status(_get_status())
             return
 
-    personnummer = input("Personnummer (12 digits): ").strip()
+    if personnummer is None:
+        personnummer = input("Personnummer (12 digits): ").strip()
     _validate_personnummer(personnummer)
 
+    _clear_session_if_identity_changed(existing, personnummer)
     _write_config(f"PERSONNUMMER={personnummer}\n", quiet)
 
-    login(personnummer, session_path=str(SESSION_FILE))
+    login(personnummer, session_path=str(SESSION_FILE), quiet=quiet)
     _progress("Authenticated.", quiet)
     _print_status(_get_status())
 

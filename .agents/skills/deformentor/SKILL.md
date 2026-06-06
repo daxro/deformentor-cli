@@ -11,9 +11,8 @@ Use Deformentor as a non-interactive, JSON-first CLI. Do not use this skill for 
 
 1. Run `deformentor --version`.
 2. Inspect `deformentor --help` and the relevant subcommand help before use.
-3. If setup is missing, ask the user to run `deformentor setup` themselves in an interactive terminal.
-
-Never ask for, receive, store, or pass a person's personnummer.
+3. If setup is missing, ask the user for personnummer, then run `deformentor setup --personnummer VALUE`.
+4. Tell the user to approve the Freja eID+ request on their phone.
 
 ## Reads
 
@@ -58,7 +57,7 @@ Read the JSON error on stderr and handle the exit code:
 - `5`: report a network or upstream server failure
 - `130`: stop because the user interrupted the command
 
-Do not retry writes automatically. Do not share personnummer, session files, cookies, or raw debug logs.
+Do not retry writes automatically. Do not share session files, cookies, or raw debug logs.
 
 ## Update
 
