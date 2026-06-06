@@ -23,7 +23,7 @@ dependencies = [
     "requests>=2.31.0",
     "python-dotenv>=1.0.0",
     "platformdirs>=4.0.0",
-    "stockholm-freja>=0.1.0,<0.2.0",
+    "stockholm-freja @ git+https://github.com/daxro/stockholm-freja.git@master",
 ]
 
 [project.scripts]
@@ -46,6 +46,3 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-
-[tool.uv.sources]
-stockholm-freja = { git = "https://github.com/daxro/stockholm-freja.git" }
