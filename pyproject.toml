@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=77.0.3"]
+requires = ["setuptools>=82.0.1"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -20,9 +20,9 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
-    "requests>=2.31.0",
+    "requests>=2.34.2",
     "python-dotenv>=1.0.0",
-    "platformdirs>=4.0.0",
+    "platformdirs>=4.10.0",
     "stockholm-freja>=0.1.0,<0.2.0",
 ]
 
@@ -41,7 +41,7 @@ Security = "https://github.com/daxro/deformentor-cli/security/policy"
 
 [dependency-groups]
 dev = [
-    "pytest>=9.0.2",
+    "pytest>=9.0.3",
 ]
 
 [tool.pytest.ini_options]
