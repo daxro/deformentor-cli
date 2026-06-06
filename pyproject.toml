@@ -48,4 +48,4 @@ dev = [
 testpaths = ["tests"]
 
 [tool.uv.sources]
-stockholm-freja = { path = "../stockholm-freja" }
+stockholm-freja = { git = "https://github.com/daxro/stockholm-freja.git" }

@@ -59,3 +59,11 @@ Read the JSON error on stderr and handle the exit code:
 - `130`: stop because the user interrupted the command
 
 Do not retry writes automatically. Do not share personnummer, session files, cookies, or raw debug logs.
+
+## Update
+
+Update the installed CLI with:
+
+```bash
+uv tool upgrade deformentor-cli
+```

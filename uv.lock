@@ -161,7 +161,7 @@ requires-dist = [
     { name = "platformdirs", specifier = ">=4.0.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "requests", specifier = ">=2.31.0" },
-    { name = "stockholm-freja", directory = "../stockholm-freja" },
+    { name = "stockholm-freja", git = "https://github.com/daxro/stockholm-freja.git" },
 ]
 provides-extras = ["completion"]
 
@@ -279,16 +279,10 @@ wheels = [
 [[package]]
 name = "stockholm-freja"
 version = "0.1.0"
-source = { directory = "../stockholm-freja" }
+source = { git = "https://github.com/daxro/stockholm-freja.git#c1862632b38b42af40f5f802104251ca4a32f389" }
 dependencies = [
     { name = "requests" },
 ]
-
-[package.metadata]
-requires-dist = [{ name = "requests", specifier = ">=2.31.0" }]
-
-[package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=9.0.2" }]
 
 [[package]]
 name = "tomli"

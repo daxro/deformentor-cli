@@ -6,10 +6,22 @@ This project is not affiliated with InfoMentor or Stockholms stad. Use it only w
 
 ## Install
 
-Install the stable tagged release:
+Install the latest source:
 
 ```bash
-uv tool install "git+https://github.com/daxro/deformentor-cli.git@v0.2.0"
+uv tool install git+https://github.com/daxro/deformentor-cli.git
+```
+
+Update an existing install:
+
+```bash
+uv tool upgrade deformentor-cli
+```
+
+Pin a commit for reproducible automation:
+
+```bash
+uv tool install git+https://github.com/daxro/deformentor-cli.git@<commit-sha>
 ```
 
 The shorter `dfm` command is also installed.
@@ -146,6 +158,6 @@ uv run --locked pytest
 uv build --no-sources
 ```
 
-Installations from `master` are development builds. Tagged releases are the stable installation path.
+Installations from `master` can be updated with `uv tool upgrade deformentor-cli`.
 
 See [SECURITY.md](SECURITY.md) for reporting security issues.
