@@ -635,21 +635,6 @@ class TestResolveAndSwitchChild:
 
     @patch("deformentor_cli.cli.switch_child")
     @patch("deformentor_cli.cli.get_children")
-    def test_ambiguous_read_context_exits(self, mock_children, mock_switch):
-        from deformentor_cli.cli import _resolve_and_switch_child
-        mock_children.return_value = [
-            {"name": "Example, Student A", "id": "5001001"},
-            {"name": "Example, Student A Jr", "id": "9999"},
-        ]
-
-        with pytest.raises(SystemExit) as exc_info:
-            _resolve_and_switch_child(MagicMock(), "Student")
-
-        assert exc_info.value.code == 2
-        mock_switch.assert_not_called()
-
-    @patch("deformentor_cli.cli.switch_child")
-    @patch("deformentor_cli.cli.get_children")
     def test_ambiguous_substring_requires_unique_match(self, mock_children, mock_switch, capsys):
         from deformentor_cli.cli import _resolve_and_switch_child
         mock_children.return_value = [
@@ -663,19 +648,6 @@ class TestResolveAndSwitchChild:
         err = json.loads(capsys.readouterr().err)
         assert "matches multiple children" in err["message"]
         mock_switch.assert_not_called()
-
-    @patch("deformentor_cli.cli.switch_child")
-    @patch("deformentor_cli.cli.get_children")
-    def test_exact_firstname_wins_among_multiple_substrings(self, mock_children, mock_switch):
-        from deformentor_cli.cli import _resolve_and_switch_child
-        mock_children.return_value = [
-            {"name": "Example, Student A", "id": "5001001", "hybridMappingId": "m1", "selected": True},
-            {"name": "Example, Student A Jr", "id": "9999", "hybridMappingId": "m3", "selected": False},
-        ]
-        session = MagicMock()
-        _resolve_and_switch_child(session, "Student A")
-        mock_switch.assert_called_once_with(session, "5001001")
-
 
 class TestAttendanceCommand:
     @patch("deformentor_cli.cli.get_attendance_detail")

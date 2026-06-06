@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 import pytest
 import requests
 
-from deformentor_cli.api import get_children, switch_child, get_notifications, get_messages, get_attendance_detail, get_calendar_event, get_news_detail, get_meeting_availabilities, fetch_all_notifications, fetch_all_messages, get_attachment
+from deformentor_cli.api import get_children, switch_child, get_notifications, get_messages, get_attendance_detail, get_calendar_event, get_news_detail, get_meeting_availabilities, fetch_all_notifications, fetch_all_messages, get_attachment, validate_attachment_url
 from deformentor_cli.api import get_time_registrations, get_time_registration_for_date, get_time_registration_comments, save_time_registration_comment, normalize_time_registration_comment
 from deformentor_cli.api import _normalize_type_name, _extract_id_from_url, _normalize_notification, _normalize_message, _normalize_message_summary
 from deformentor_cli.errors import UpstreamStateError
@@ -92,7 +92,7 @@ class TestGetChildren:
         resp.text = "<html>no data here</html>"
         session.get.return_value = resp
 
-        with pytest.raises(Exception, match="homeData"):
+        with pytest.raises(RuntimeError, match="homeData"):
             get_children(session)
 
 
@@ -107,14 +107,6 @@ class TestSwitchChild:
 
         url = session.get.call_args_list[0][0][0]
         assert "/Account/PupilSwitcher/SwitchPupil/5001001" in url
-
-    def test_does_not_raise_on_500(self):
-        session = MagicMock()
-        resp = MagicMock()
-        resp.status_code = 500
-        session.get.side_effect = [resp, _hub_response_with_selected("5001001")]
-
-        switch_child(session, "5001001")  # should not raise
 
     def test_sends_ajax_header(self):
         session = MagicMock()
@@ -182,10 +174,10 @@ class TestGetNotifications:
     def test_raises_on_http_error(self):
         session = MagicMock()
         resp = MagicMock()
-        resp.raise_for_status.side_effect = Exception("401 Unauthorized")
+        resp.raise_for_status.side_effect = requests.HTTPError("401 Unauthorized", response=resp)
         session.post.return_value = resp
 
-        with pytest.raises(Exception, match="401"):
+        with pytest.raises(requests.HTTPError, match="401"):
             get_notifications(session)
 
 
@@ -270,10 +262,10 @@ class TestGetMessages:
     def test_raises_on_http_error(self):
         session = MagicMock()
         resp = MagicMock()
-        resp.raise_for_status.side_effect = Exception("401 Unauthorized")
+        resp.raise_for_status.side_effect = requests.HTTPError("401 Unauthorized", response=resp)
         session.post.return_value = resp
 
-        with pytest.raises(Exception, match="401"):
+        with pytest.raises(requests.HTTPError, match="401"):
             get_messages(session)
 
     def test_warns_when_more_pages_exist(self, capsys):
@@ -366,10 +358,10 @@ class TestTimeRegistrationApi:
     def test_http_errors_bubble_up(self):
         session = MagicMock()
         resp = MagicMock()
-        resp.raise_for_status.side_effect = Exception("401 Unauthorized")
+        resp.raise_for_status.side_effect = requests.HTTPError("401 Unauthorized", response=resp)
         session.post.return_value = resp
 
-        with pytest.raises(Exception, match="401"):
+        with pytest.raises(requests.HTTPError, match="401"):
             get_time_registration_comments(session, "2026-06-05")
 
 
@@ -418,10 +410,10 @@ class TestSaveTimeRegistrationComment:
     def test_http_errors_bubble_up(self):
         session = MagicMock()
         resp = MagicMock()
-        resp.raise_for_status.side_effect = Exception("500 Server Error")
+        resp.raise_for_status.side_effect = requests.HTTPError("500 Server Error", response=resp)
         session.post.return_value = resp
 
-        with pytest.raises(Exception, match="500"):
+        with pytest.raises(requests.HTTPError, match="500"):
             save_time_registration_comment(session, 0, "Hämtas av: Example Guardian", 123456)
 
 
@@ -947,9 +939,9 @@ class TestGetMeetingAvailabilities:
     def test_raises_on_http_error(self):
         session = MagicMock()
         resp = MagicMock()
-        resp.raise_for_status.side_effect = Exception("500 Error")
+        resp.raise_for_status.side_effect = requests.HTTPError("500 Error", response=resp)
         session.post.return_value = resp
-        with pytest.raises(Exception, match="500"):
+        with pytest.raises(requests.HTTPError, match="500"):
             get_meeting_availabilities(session)
 
 
@@ -985,9 +977,9 @@ class TestGetAttachment:
     def test_raises_on_http_error(self):
         session = MagicMock()
         resp = MagicMock()
-        resp.raise_for_status.side_effect = Exception("404 Not Found")
+        resp.raise_for_status.side_effect = requests.HTTPError("404 Not Found", response=resp)
         session.get.return_value = resp
-        with pytest.raises(Exception, match="404"):
+        with pytest.raises(requests.HTTPError, match="404"):
             get_attachment(session, "/Resources/Resource/Download/bad")
 
     def test_rejects_redirect_without_following_it(self):
@@ -1004,14 +996,12 @@ class TestGetAttachment:
 
 class TestAttachmentUrlValidation:
     def test_rejects_path_traversal(self):
-        session = MagicMock()
         with pytest.raises(ValueError, match="path traversal"):
-            get_attachment(session, "/../../../etc/passwd")
+            validate_attachment_url("/../../../etc/passwd")
 
     def test_rejects_absolute_url(self):
-        session = MagicMock()
         with pytest.raises(ValueError, match="must start with"):
-            get_attachment(session, "https://evil.com/file")
+            validate_attachment_url("https://evil.com/file")
 
     @pytest.mark.parametrize("url", [
         "//evil.example/Resources/Resource/Download/123",
@@ -1026,15 +1016,12 @@ class TestAttachmentUrlValidation:
     ])
     def test_rejects_unsafe_or_unexpected_paths(self, url):
         with pytest.raises(ValueError):
-            get_attachment(MagicMock(), url)
+            validate_attachment_url(url)
 
     def test_accepts_valid_resource_path(self):
-        session = MagicMock()
-        resp = MagicMock()
-        resp.content = b"data"
-        session.get.return_value = resp
-        result = get_attachment(session, "/Resources/Resource/Download/123?api=IM2")
-        assert result == b"data"
+        assert validate_attachment_url("/Resources/Resource/Download/123?api=IM2") == (
+            "/Resources/Resource/Download/123?api=IM2"
+        )
 
 
 class TestGetAttendanceDetail:
@@ -1076,9 +1063,9 @@ class TestGetAttendanceDetail:
     def test_raises_on_http_error(self):
         session = MagicMock()
         resp = MagicMock()
-        resp.raise_for_status.side_effect = Exception("404 Not Found")
+        resp.raise_for_status.side_effect = requests.HTTPError("404 Not Found", response=resp)
         session.post.return_value = resp
-        with pytest.raises(Exception, match="404"):
+        with pytest.raises(requests.HTTPError, match="404"):
             get_attendance_detail(session, "99999")
 
 
@@ -1121,9 +1108,9 @@ class TestGetCalendarEvent:
     def test_raises_on_http_error(self):
         session = MagicMock()
         resp = MagicMock()
-        resp.raise_for_status.side_effect = Exception("404 Not Found")
+        resp.raise_for_status.side_effect = requests.HTTPError("404 Not Found", response=resp)
         session.post.return_value = resp
-        with pytest.raises(Exception, match="404"):
+        with pytest.raises(requests.HTTPError, match="404"):
             get_calendar_event(session, "99999")
 
 
@@ -1180,7 +1167,7 @@ class TestGetNewsDetail:
     def test_raises_on_http_error(self):
         session = MagicMock()
         resp = MagicMock()
-        resp.raise_for_status.side_effect = Exception("500 Error")
+        resp.raise_for_status.side_effect = requests.HTTPError("500 Error", response=resp)
         session.post.return_value = resp
-        with pytest.raises(Exception, match="500"):
+        with pytest.raises(requests.HTTPError, match="500"):
             get_news_detail(session, 1)

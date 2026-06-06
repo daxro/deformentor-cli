@@ -266,6 +266,13 @@ class TestVerifyAuthenticated:
         session.post.return_value = response
 
         verify_authenticated(session)
+        session.post.assert_called_once()
+        called_url = session.post.call_args.args[0]
+        assert called_url.startswith("https://hub.infomentor.se/authentication/authentication/isauthenticated/?_=")
+        assert session.post.call_args.kwargs == {
+            "allow_redirects": False,
+            "timeout": 30,
+        }
 
 
 class TestLogin:
