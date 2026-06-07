@@ -26,13 +26,6 @@ jobs:
           path: deformentor-cli
           persist-credentials: false
 
-      - name: Check out stockholm-freja
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          repository: daxro/stockholm-freja
-          path: stockholm-freja
-          persist-credentials: false
-
       - name: Install uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
         with:
@@ -61,13 +54,8 @@ jobs:
         working-directory: deformentor-cli
         run: |
           wheel="$(find dist -name '*.whl' -print -quit)"
-          stockholm_wheel="$(find ../stockholm-freja/dist -name '*.whl' -print -quit 2>/dev/null || true)"
-          if [ -z "$stockholm_wheel" ]; then
-            (cd ../stockholm-freja && uv build)
-            stockholm_wheel="$(find ../stockholm-freja/dist -name '*.whl' -print -quit)"
-          fi
-          uv run --isolated --no-project --with "$stockholm_wheel" --with "$wheel" deformentor --version
-          uv run --isolated --no-project --with "$stockholm_wheel" --with "$wheel" python -c \
+          uv run --isolated --no-project --with "$wheel" deformentor --version
+          uv run --isolated --no-project --with "$wheel" python -c \
             'from importlib.metadata import metadata, version; m = metadata("deformentor-cli"); assert version("deformentor-cli") == "0.2.0"; assert m["License-Expression"] == "MIT"; assert m["Project-URL"]'
           uv run --isolated --no-project python -c \
             'import sys, zipfile; names = zipfile.ZipFile(sys.argv[1]).namelist(); assert any(name.endswith(".dist-info/licenses/LICENSE") for name in names)' \
