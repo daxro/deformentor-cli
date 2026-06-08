@@ -257,7 +257,11 @@ def get_time_registrations(session, date_iso):
     resp.raise_for_status()
     data = resp.json()
     if isinstance(data, dict):
-        return data.get("items") or data.get("timeRegistrations") or []
+        for key in ("days", "items", "timeRegistrations"):
+            value = data.get(key)
+            if isinstance(value, list):
+                return value
+        return []
     if isinstance(data, list):
         return data
     return []
@@ -284,7 +288,13 @@ def get_time_registration_comments(session, date_iso):
     resp.raise_for_status()
     data = resp.json()
     if isinstance(data, dict):
-        return data.get("comments") or data.get("items") or []
+        if "userComment" in data or "parentCommentId" in data:
+            return data
+        for key in ("comments", "items"):
+            value = data.get(key)
+            if isinstance(value, list):
+                return value
+        return []
     if isinstance(data, list):
         return data
     return []
@@ -312,7 +322,10 @@ def save_time_registration_comment(session, comment_id, comment_text, time_regis
 def normalize_time_registration_comment(raw_comments):
     """Normalize the first non-empty time registration comment for CLI output."""
     if isinstance(raw_comments, dict):
-        raw_comments = raw_comments.get("comments") or raw_comments.get("items") or []
+        if "userComment" in raw_comments or "parentCommentId" in raw_comments:
+            raw_comments = [raw_comments]
+        else:
+            raw_comments = raw_comments.get("comments") or raw_comments.get("items") or []
 
     for raw in raw_comments or []:
         user_comment = raw.get("userComment") or ""

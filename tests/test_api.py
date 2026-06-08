@@ -329,6 +329,25 @@ class TestTimeRegistrationApi:
         assert kwargs["json"] == {"date": "2026-06-05T00:00:00"}
         assert kwargs["headers"]["X-Requested-With"] == "XMLHttpRequest"
 
+    def test_get_time_registration_comments_preserves_top_level_comment_object(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.json.return_value = {
+            "date": "2026-06-05T00:00:00",
+            "parentCommentId": 10,
+            "userComment": "Hämtas av: Guardian",
+        }
+        resp.raise_for_status = MagicMock()
+        session.post.return_value = resp
+
+        result = get_time_registration_comments(session, "2026-06-05")
+
+        assert result == {
+            "date": "2026-06-05T00:00:00",
+            "parentCommentId": 10,
+            "userComment": "Hämtas av: Guardian",
+        }
+
     def test_get_time_registration_for_date_returns_matching_row(self):
         session = MagicMock()
         resp = MagicMock()
@@ -336,6 +355,22 @@ class TestTimeRegistrationApi:
             "items": [
                 {"timeRegistrationId": 999, "date": "2026-06-04T00:00:00"},
                 {"timeRegistrationId": 123, "date": "2026-06-05T12:00:00"},
+            ]
+        }
+        resp.raise_for_status = MagicMock()
+        session.post.return_value = resp
+
+        result = get_time_registration_for_date(session, "2026-06-05")
+
+        assert result["timeRegistrationId"] == 123
+
+    def test_get_time_registration_for_date_accepts_days_response(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.json.return_value = {
+            "days": [
+                {"timeRegistrationId": 999, "date": "2026-06-04T00:00:00"},
+                {"timeRegistrationId": 123, "date": "2026-06-05T00:00:00"},
             ]
         }
         resp.raise_for_status = MagicMock()
@@ -441,6 +476,24 @@ class TestNormalizeTimeRegistrationComment:
         result = normalize_time_registration_comment([])
 
         assert result == {"found": False}
+
+    def test_returns_top_level_comment_object(self):
+        raw = {
+            "date": "2026-06-05T00:00:00",
+            "parentCommentId": 12,
+            "userComment": "Hämtas av: Example Guardian",
+            "userName": "Example, Guardian B",
+            "checkedIn": "08:17",
+            "canEditComment": False,
+        }
+
+        result = normalize_time_registration_comment(raw)
+
+        assert result["found"] is True
+        assert result["parentCommentId"] == 12
+        assert result["userComment"] == "Hämtas av: Example Guardian"
+        assert result["owner"] == "Example, Guardian B"
+        assert result["canEditComment"] is False
 
 
 class TestNormalizeTypeName:
