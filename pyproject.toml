@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=77.0.3"]
+requires = ["setuptools>=82.0.1"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -20,9 +20,9 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
-    "requests>=2.31.0",
+    "requests>=2.34.2",
     "python-dotenv>=1.0.0",
-    "platformdirs>=4.0.0",
+    "platformdirs>=4.10.0",
     "stockholm-freja @ git+https://github.com/daxro/stockholm-freja.git@master",
 ]
 
@@ -31,7 +31,7 @@ deformentor = "deformentor_cli.cli:main"
 dfm = "deformentor_cli.cli:main"
 
 [project.optional-dependencies]
-completion = ["argcomplete>=3.0"]
+completion = ["argcomplete>=3.7.0"]
 
 [project.urls]
 Homepage = "https://github.com/daxro/deformentor-cli"
@@ -41,7 +41,7 @@ Security = "https://github.com/daxro/deformentor-cli/security/policy"
 
 [dependency-groups]
 dev = [
-    "pytest>=9.0.2",
+    "pytest>=9.1.1",
 ]
 
 [tool.pytest.ini_options]
