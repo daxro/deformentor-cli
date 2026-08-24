@@ -13,6 +13,8 @@ STATE_DIR = Path(platformdirs.user_state_dir(_APP))
 
 CONFIG_FILE = CONFIG_DIR / "config.env"
 SESSION_FILE = STATE_DIR / "session.json"
+OAUTH_FILE = STATE_DIR / "oauth.json"
+OAUTH_LOCK_FILE = STATE_DIR / "oauth.lock"
 
 
 def write_private_text(path, content):

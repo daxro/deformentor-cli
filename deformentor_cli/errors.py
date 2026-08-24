@@ -22,6 +22,10 @@ class AuthenticationError(Exception):
     """Authentication failed outside the Freja approval step."""
 
 
+class OAuthSetupRequired(AuthenticationError):
+    """Stored OAuth authentication must be renewed through explicit setup."""
+
+
 class UpstreamStateError(Exception):
     """An upstream operation completed without the expected state change."""
 

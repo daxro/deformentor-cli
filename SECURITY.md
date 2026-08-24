@@ -6,7 +6,7 @@ Report vulnerabilities through [GitHub private vulnerability reporting](https://
 
 Do not open a public issue for a suspected vulnerability.
 
-Never include session files, cookies, SAML values, authentication links, response bodies, or raw debug logs in any report, including a private report. Describe the issue with synthetic data and redact all credentials.
+Never include session or OAuth files, cookies, access or refresh tokens, authorization codes, OAuth callback URLs, one-time SSO URLs, SAML values, authentication links, response bodies, or raw debug logs in any report, including a private report. Describe the issue with synthetic data and redact all credentials.
 
 ## Supported Versions
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "deformentor-cli"
-version = "0.2.0"
+version = "0.3.0"
 description = "Unofficial agent-friendly CLI for authorized InfoMentor school data"
 readme = "README.md"
 license = "MIT"
@@ -24,6 +24,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "platformdirs>=4.10.0",
     "stockholm-freja @ git+https://github.com/daxro/stockholm-freja.git@master",
+    "portalocker>=3.0.0",
 ]
 
 [project.scripts]

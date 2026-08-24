@@ -14,7 +14,7 @@ class TestGetSession:
     @patch("deformentor_cli.cli.login")
     @patch("deformentor_cli.cli.dotenv_values")
     def test_returns_authenticated_session(self, mock_dotenv, mock_login):
-        from deformentor_cli.cli import _get_session, SESSION_FILE
+        from deformentor_cli.cli import _get_session, OAUTH_FILE, OAUTH_LOCK_FILE, SESSION_FILE
 
         mock_dotenv.return_value = {"PERSONNUMMER": "000000000000"}
         mock_session = MagicMock()
@@ -23,7 +23,13 @@ class TestGetSession:
         result = _get_session()
 
         assert result is mock_session
-        mock_login.assert_called_once_with("000000000000", session_path=str(SESSION_FILE), quiet=False)
+        mock_login.assert_called_once_with(
+            "000000000000",
+            session_path=str(SESSION_FILE),
+            oauth_path=str(OAUTH_FILE),
+            lock_path=str(OAUTH_LOCK_FILE),
+            quiet=False,
+        )
 
     @patch("deformentor_cli.cli.dotenv_values")
     def test_exits_on_missing_personnummer(self, mock_dotenv, capsys):
@@ -52,12 +58,18 @@ class TestGetSessionQuiet:
     @patch("deformentor_cli.cli.login")
     @patch("deformentor_cli.cli.dotenv_values")
     def test_passes_quiet_to_login(self, mock_dotenv, mock_login):
-        from deformentor_cli.cli import _get_session, SESSION_FILE
+        from deformentor_cli.cli import _get_session, OAUTH_FILE, OAUTH_LOCK_FILE, SESSION_FILE
         mock_dotenv.return_value = {"PERSONNUMMER": "000000000000"}
         mock_session = MagicMock()
         mock_login.return_value = mock_session
         _get_session(quiet=True)
-        mock_login.assert_called_once_with("000000000000", session_path=str(SESSION_FILE), quiet=True)
+        mock_login.assert_called_once_with(
+            "000000000000",
+            session_path=str(SESSION_FILE),
+            oauth_path=str(OAUTH_FILE),
+            lock_path=str(OAUTH_LOCK_FILE),
+            quiet=True,
+        )
 
 
 class TestValidateDateFlag:
@@ -718,7 +730,8 @@ class TestStatus:
         ]
         args = MagicMock()
         args.json_output = False
-        _status(args)
+        with patch("deformentor_cli.cli.oauth_state", return_value="configured"):
+            _status(args)
         captured = capsys.readouterr()
         assert "personnummer" not in captured.out.lower()
         assert "valid" in captured.out.lower()
@@ -749,10 +762,11 @@ class TestStatus:
         mock_verify.side_effect = AuthenticationError("not authenticated")
         args = MagicMock()
         args.json_output = False
-        _status(args)
+        with patch("deformentor_cli.cli.oauth_state", return_value="configured"):
+            _status(args)
         captured = capsys.readouterr()
         assert "expired" in captured.out.lower()
-        assert "re-authenticate" in captured.out.lower()
+        assert "renew the session automatically" in captured.out.lower()
 
     @patch("deformentor_cli.cli.verify_authenticated")
     @patch("deformentor_cli.cli.new_session")
@@ -780,7 +794,8 @@ class TestStatus:
         mock_load.return_value = False
         args = MagicMock()
         args.json_output = False
-        _status(args)
+        with patch("deformentor_cli.cli.oauth_state", return_value="missing"):
+            _status(args)
         captured = capsys.readouterr()
         assert "none" in captured.out.lower()
         assert "start a session" in captured.out.lower()
@@ -1030,20 +1045,22 @@ class TestQuietMode:
 
 class TestNonInteractiveSetup:
     @patch("deformentor_cli.cli._print_status")
-    @patch("deformentor_cli.cli.save_session")
-    @patch("deformentor_cli.cli.login")
-    def test_reads_env_var_when_no_tty(self, mock_login, mock_save_session, mock_print_status, monkeypatch, capsys, tmp_path):
+    @patch("deformentor_cli.cli._persist_setup_state")
+    @patch("deformentor_cli.cli.setup_login")
+    def test_reads_env_var_when_no_tty(self, mock_setup_login, mock_persist, mock_print_status, monkeypatch, tmp_path):
         from deformentor_cli.cli import _setup
         config_file = tmp_path / "config.env"
         monkeypatch.setattr("deformentor_cli.cli.CONFIG_FILE", config_file)
         monkeypatch.setenv("PERSONNUMMER", "000000000000")
         monkeypatch.setattr("sys.stdin", io.StringIO(""))
+        mock_setup_login.return_value = (MagicMock(), {"refresh_token": "refresh"})
         _setup()
-        mock_login.assert_called_once()
-        assert "000000000000" in config_file.read_text()
+        mock_setup_login.assert_called_once_with("000000000000", quiet=False)
+        mock_persist.assert_called_once()
 
-    def test_fails_without_env_var_when_no_tty(self, monkeypatch, capsys):
+    def test_fails_without_env_var_when_no_tty(self, monkeypatch, capsys, tmp_path):
         from deformentor_cli.cli import _setup
+        monkeypatch.setattr("deformentor_cli.cli.CONFIG_FILE", tmp_path / "config.env")
         monkeypatch.setattr("sys.stdin", io.StringIO(""))
         monkeypatch.delenv("PERSONNUMMER", raising=False)
         with pytest.raises(SystemExit) as exc_info:
@@ -1054,10 +1071,10 @@ class TestNonInteractiveSetup:
 
     @patch("deformentor_cli.cli._get_status")
     @patch("deformentor_cli.cli._print_status")
-    @patch("deformentor_cli.cli.save_session")
-    @patch("deformentor_cli.cli.login")
+    @patch("deformentor_cli.cli._persist_setup_state")
+    @patch("deformentor_cli.cli.setup_login")
     def test_explicit_personnummer_wins_over_env_var(
-        self, mock_login, mock_save_session, mock_print_status, mock_status, monkeypatch, tmp_path
+        self, mock_setup_login, mock_persist, mock_print_status, mock_status, monkeypatch, tmp_path
     ):
         from deformentor_cli.cli import _setup
 
@@ -1065,169 +1082,112 @@ class TestNonInteractiveSetup:
         monkeypatch.setattr("deformentor_cli.cli.CONFIG_FILE", config_file)
         monkeypatch.setenv("PERSONNUMMER", "111111111111")
         monkeypatch.setattr("sys.stdin", MagicMock(isatty=lambda: True))
-        mock_status.return_value = {"configured": True, "session": "valid", "children": []}
+        mock_setup_login.return_value = (MagicMock(), {"refresh_token": "refresh"})
 
         _setup(personnummer="222222222222")
 
-        assert config_file.read_text() == "PERSONNUMMER=222222222222\n"
-        mock_login.assert_called_once()
-        assert mock_login.call_args.args[0] == "222222222222"
+        mock_setup_login.assert_called_once_with("222222222222", quiet=False)
+        assert mock_persist.call_args.args[0] == "222222222222"
 
-    @patch("deformentor_cli.cli._get_status")
     @patch("deformentor_cli.cli._print_status")
-    @patch("deformentor_cli.cli.save_session")
-    @patch("deformentor_cli.cli.login")
+    @patch("deformentor_cli.cli._persist_setup_state")
+    @patch("deformentor_cli.cli.setup_login")
     def test_explicit_personnummer_with_no_input(
-        self, mock_login, mock_save_session, mock_print_status, mock_status, monkeypatch, tmp_path
+        self, mock_setup_login, mock_persist, mock_print_status, monkeypatch, tmp_path
     ):
         from deformentor_cli.cli import _setup
 
         config_file = tmp_path / "config.env"
         monkeypatch.setattr("deformentor_cli.cli.CONFIG_FILE", config_file)
         monkeypatch.setattr("sys.stdin", MagicMock(isatty=lambda: True))
-        mock_status.return_value = {"configured": True, "session": "valid", "children": []}
+        mock_setup_login.return_value = (MagicMock(), {"refresh_token": "refresh"})
 
         _setup(no_input=True, personnummer="222222222222")
 
-        assert config_file.read_text() == "PERSONNUMMER=222222222222\n"
-        mock_login.assert_called_once()
+        mock_setup_login.assert_called_once_with("222222222222", quiet=False)
+        mock_persist.assert_called_once()
 
-    @patch("deformentor_cli.cli._get_status")
     @patch("deformentor_cli.cli._print_status")
-    @patch("deformentor_cli.cli.save_session")
-    @patch("deformentor_cli.cli.login")
+    @patch("deformentor_cli.cli._persist_setup_state")
+    @patch("deformentor_cli.cli.setup_login")
     @patch("deformentor_cli.cli._maybe_print_logo")
     def test_interactive_setup_prompts_when_no_noninteractive_input(
-        self, mock_logo, mock_login, mock_save_session, mock_print_status, mock_status, monkeypatch, tmp_path
+        self, mock_logo, mock_setup_login, mock_persist, mock_print_status, monkeypatch, tmp_path
     ):
         from deformentor_cli.cli import _setup
 
         monkeypatch.setattr("deformentor_cli.cli.CONFIG_FILE", tmp_path / "config.env")
         monkeypatch.setattr("sys.stdin", MagicMock(isatty=lambda: True))
-        mock_status.return_value = {"configured": True, "session": "valid", "children": []}
+        mock_setup_login.return_value = (MagicMock(), {"refresh_token": "refresh"})
 
         with patch("builtins.input", return_value="222222222222") as mock_input:
             _setup()
 
         mock_logo.assert_called_once()
         mock_input.assert_called_once_with("Personnummer (12 digits): ")
-        mock_login.assert_called_once()
+        mock_setup_login.assert_called_once_with("222222222222", quiet=False)
 
-    @patch("deformentor_cli.cli._get_status")
     @patch("deformentor_cli.cli._print_status")
-    @patch("deformentor_cli.cli.save_session")
-    @patch("deformentor_cli.cli.login")
-    def test_setup_uses_fresh_login_before_replacing_state(
-        self, mock_login, mock_save_session, mock_print_status, mock_status, monkeypatch, tmp_path
+    @patch("deformentor_cli.cli._persist_setup_state")
+    @patch("deformentor_cli.cli.setup_login")
+    def test_setup_reuses_stored_personnummer_without_prompt(
+        self, mock_setup_login, mock_persist, mock_print_status, monkeypatch, tmp_path
     ):
         from deformentor_cli.cli import _setup
 
         config_file = tmp_path / "config.env"
-        session_file = tmp_path / "session.json"
         config_file.write_text("PERSONNUMMER=111111111111\n")
-        session_file.write_text("{}")
         monkeypatch.setattr("deformentor_cli.cli.CONFIG_FILE", config_file)
-        monkeypatch.setattr("deformentor_cli.cli.SESSION_FILE", session_file)
         monkeypatch.setattr("sys.stdin", MagicMock(isatty=lambda: True))
-        mock_status.return_value = {"configured": True, "session": "valid", "children": []}
+        mock_setup_login.return_value = (MagicMock(), {"refresh_token": "refresh"})
 
-        _setup(personnummer="222222222222")
-
-        assert config_file.read_text() == "PERSONNUMMER=222222222222\n"
-        mock_login.assert_called_once_with("222222222222", quiet=False)
-        mock_save_session.assert_called_once_with(mock_login.return_value, str(session_file))
-
-    @patch("deformentor_cli.cli._get_status")
-    @patch("deformentor_cli.cli._print_status")
-    @patch("deformentor_cli.cli.save_session")
-    @patch("deformentor_cli.cli.login")
-    def test_setup_replaces_session_for_same_personnummer(
-        self, mock_login, mock_save_session, mock_print_status, mock_status, monkeypatch, tmp_path
-    ):
-        from deformentor_cli.cli import _setup
-
-        config_file = tmp_path / "config.env"
-        session_file = tmp_path / "session.json"
-        config_file.write_text("PERSONNUMMER=111111111111\n")
-        session_file.write_text("{}")
-        monkeypatch.setattr("deformentor_cli.cli.CONFIG_FILE", config_file)
-        monkeypatch.setattr("deformentor_cli.cli.SESSION_FILE", session_file)
-        monkeypatch.setattr("sys.stdin", MagicMock(isatty=lambda: True))
-        mock_status.return_value = {"configured": True, "session": "valid", "children": []}
-
-        _setup(personnummer="111111111111")
-
-        assert config_file.read_text() == "PERSONNUMMER=111111111111\n"
-        mock_login.assert_called_once_with("111111111111", quiet=False)
-        mock_save_session.assert_called_once_with(mock_login.return_value, str(session_file))
-
-    @patch("deformentor_cli.cli._get_status")
-    @patch("deformentor_cli.cli._print_status")
-    @patch("deformentor_cli.cli.login")
-    def test_setup_login_failure_does_not_change_state(
-        self, mock_login, mock_print_status, mock_status, monkeypatch, tmp_path
-    ):
-        from deformentor_cli.cli import _setup
-
-        config_file = tmp_path / "config.env"
-        session_file = tmp_path / "session.json"
-        config_file.write_text("PERSONNUMMER=111111111111\n")
-        session_file.write_text("{}")
-        monkeypatch.setattr("deformentor_cli.cli.CONFIG_FILE", config_file)
-        monkeypatch.setattr("deformentor_cli.cli.SESSION_FILE", session_file)
-        monkeypatch.setattr("sys.stdin", MagicMock(isatty=lambda: True))
-        mock_status.return_value = {"configured": True, "session": "valid", "children": []}
-        mock_login.side_effect = RuntimeError("login failed")
-
-        with pytest.raises(RuntimeError):
-            _setup(personnummer="222222222222")
-
-        assert config_file.read_text() == "PERSONNUMMER=111111111111\n"
-        assert session_file.read_text() == "{}"
-
-    @patch("deformentor_cli.cli._get_status")
-    @patch("deformentor_cli.cli._print_status")
-    @patch("deformentor_cli.cli.save_session")
-    @patch("deformentor_cli.cli.login")
-    def test_setup_session_save_failure_does_not_change_state(
-        self, mock_login, mock_save_session, mock_print_status, mock_status, monkeypatch, tmp_path
-    ):
-        from deformentor_cli.cli import _setup
-
-        config_file = tmp_path / "config.env"
-        session_file = tmp_path / "session.json"
-        config_file.write_text("PERSONNUMMER=111111111111\n")
-        session_file.write_text("{}")
-        monkeypatch.setattr("deformentor_cli.cli.CONFIG_FILE", config_file)
-        monkeypatch.setattr("deformentor_cli.cli.SESSION_FILE", session_file)
-        mock_status.return_value = {"configured": True, "session": "valid", "children": []}
-        mock_save_session.side_effect = RuntimeError("session save failed")
-
-        with pytest.raises(RuntimeError):
-            _setup(personnummer="222222222222")
-
-        assert config_file.read_text() == "PERSONNUMMER=111111111111\n"
-        assert session_file.read_text() == "{}"
-
-    @patch("deformentor_cli.cli.login")
-    def test_interactive_decline_leaves_existing_state_unchanged(self, mock_login, monkeypatch, tmp_path):
-        from deformentor_cli.cli import _setup
-
-        config_file = tmp_path / "config.env"
-        session_file = tmp_path / "session.json"
-        config_file.write_text("PERSONNUMMER=111111111111\n")
-        session_file.write_text("{}")
-        monkeypatch.setattr("deformentor_cli.cli.CONFIG_FILE", config_file)
-        monkeypatch.setattr("deformentor_cli.cli.SESSION_FILE", session_file)
-        monkeypatch.setattr("sys.stdin", MagicMock(isatty=lambda: True))
-
-        with patch("builtins.input", return_value="n"):
+        with patch("builtins.input") as mock_input:
             _setup()
 
+        mock_input.assert_not_called()
+        mock_setup_login.assert_called_once_with("111111111111", quiet=False)
+        assert mock_persist.call_args.args[0] == "111111111111"
+
+    @patch("deformentor_cli.cli._print_status")
+    @patch("deformentor_cli.cli._persist_setup_state")
+    @patch("deformentor_cli.cli.setup_login")
+    def test_stored_personnummer_wins_over_environment(
+        self, mock_setup_login, mock_persist, mock_print_status, monkeypatch, tmp_path
+    ):
+        from deformentor_cli.cli import _setup
+
+        config_file = tmp_path / "config.env"
+        config_file.write_text("PERSONNUMMER=111111111111\n")
+        monkeypatch.setattr("deformentor_cli.cli.CONFIG_FILE", config_file)
+        monkeypatch.setenv("PERSONNUMMER", "222222222222")
+        monkeypatch.setattr("sys.stdin", io.StringIO(""))
+        mock_setup_login.return_value = (MagicMock(), {"refresh_token": "refresh"})
+
+        _setup(no_input=True)
+
+        mock_setup_login.assert_called_once_with("111111111111", quiet=False)
+
+    @patch("deformentor_cli.cli._print_status")
+    @patch("deformentor_cli.cli.setup_login")
+    def test_setup_login_failure_does_not_change_state(
+        self, mock_setup_login, mock_print_status, monkeypatch, tmp_path
+    ):
+        from deformentor_cli.cli import _setup
+
+        config_file = tmp_path / "config.env"
+        session_file = tmp_path / "session.json"
+        config_file.write_text("PERSONNUMMER=111111111111\n")
+        session_file.write_text("{}")
+        monkeypatch.setattr("deformentor_cli.cli.CONFIG_FILE", config_file)
+        monkeypatch.setattr("deformentor_cli.cli.SESSION_FILE", session_file)
+        monkeypatch.setattr("sys.stdin", MagicMock(isatty=lambda: True))
+        mock_setup_login.side_effect = RuntimeError("login failed")
+
+        with pytest.raises(RuntimeError):
+            _setup(personnummer="222222222222")
+
         assert config_file.read_text() == "PERSONNUMMER=111111111111\n"
         assert session_file.read_text() == "{}"
-        mock_login.assert_not_called()
-
 
 class TestStatusJson:
     @patch("deformentor_cli.cli.get_children")
@@ -1245,12 +1205,15 @@ class TestStatusJson:
         ]
         args = MagicMock()
         args.json_output = True
-        _status(args)
+        with patch("deformentor_cli.cli.oauth_state", return_value="configured"):
+            _status(args)
         captured = capsys.readouterr()
         data = json.loads(captured.out)
         assert data["configured"] is True
         assert "personnummer" not in data
         assert data["session"] == "valid"
+        assert data["oauth"] == "configured"
+        assert data["oauth_path"].endswith("oauth.json")
         assert len(data["children"]) == 1
         assert data["children"][0]["id"] == "123"
 
@@ -1600,6 +1563,28 @@ class TestPreAuthValidation:
 
 
 class TestMainExceptionHandling:
+    def test_oauth_rejection_requires_setup_without_exposing_detail(self, monkeypatch, capsys):
+        import deformentor_cli.cli as cli
+        from deformentor_cli.errors import OAuthSetupRequired
+
+        monkeypatch.setattr("sys.argv", ["deformentor", "status"])
+        monkeypatch.setattr(
+            cli,
+            "_status",
+            MagicMock(side_effect=OAuthSetupRequired("sensitive token detail")),
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            cli.main()
+
+        assert exc_info.value.code == 3
+        output = capsys.readouterr().err
+        error = json.loads(output)
+        assert error["error"] == "oauth_setup_required"
+        assert "deformentor setup" in error["message"]
+        assert "stored personnummer" in error["message"]
+        assert "sensitive token detail" not in output
+
     @pytest.mark.parametrize("status_code,expected_exit", [
         (401, 3),
         (403, 3),
@@ -1709,17 +1694,19 @@ class TestMainExceptionHandling:
 
 
 class TestNoInputFlag:
-    @patch("deformentor_cli.cli.login")
-    def test_setup_no_input_uses_env_var(self, mock_login, monkeypatch, capsys):
+    @patch("deformentor_cli.cli._persist_setup_state")
+    @patch("deformentor_cli.cli.setup_login")
+    def test_setup_no_input_uses_env_var(self, mock_setup_login, mock_persist, monkeypatch, tmp_path):
         from deformentor_cli.cli import _setup
+        monkeypatch.setattr("deformentor_cli.cli.CONFIG_FILE", tmp_path / "config.env")
         monkeypatch.setenv("PERSONNUMMER", "000000000000")
         monkeypatch.setattr("sys.stdin", MagicMock(isatty=lambda: True))
-        mock_login.return_value = MagicMock()
+        mock_setup_login.return_value = (MagicMock(), {"refresh_token": "refresh"})
         with patch("deformentor_cli.cli._get_status") as mock_status, \
              patch("deformentor_cli.cli._print_status"):
             mock_status.return_value = {"configured": True, "session": "valid", "children": []}
             _setup(quiet=True, no_input=True)
-        mock_login.assert_called_once()
+        mock_setup_login.assert_called_once_with("000000000000", quiet=True)
 
 
 class TestSetupFlag:
@@ -2164,22 +2151,28 @@ class TestResetCommand:
 
         config = tmp_path / "config.env"
         session = tmp_path / "session.json"
+        oauth = tmp_path / "oauth.json"
+        lock = tmp_path / "oauth.lock"
         config.write_text("PERSONNUMMER=000000000000\n")
         session.write_text("{}")
+        oauth.write_text('{"refresh_token":"token"}')
 
         args = MagicMock()
         args.quiet = False
 
         with patch("deformentor_cli.cli.CONFIG_FILE", config), \
-             patch("deformentor_cli.cli.SESSION_FILE", session):
+             patch("deformentor_cli.cli.SESSION_FILE", session), \
+             patch("deformentor_cli.cli.OAUTH_FILE", oauth), \
+             patch("deformentor_cli.cli.OAUTH_LOCK_FILE", lock):
             _reset(args)
 
         assert not config.exists()
         assert not session.exists()
+        assert not oauth.exists()
         captured = capsys.readouterr()
         data = json.loads(captured.out)
         assert data["reset"] is True
-        assert len(data["deleted"]) == 2
+        assert len(data["deleted"]) == 3
         assert data["failed"] == []
         assert "Deleted" in captured.err
 
@@ -2188,12 +2181,16 @@ class TestResetCommand:
 
         config = tmp_path / "config.env"
         session = tmp_path / "session.json"
+        oauth = tmp_path / "oauth.json"
+        lock = tmp_path / "oauth.lock"
 
         args = MagicMock()
         args.quiet = False
 
         with patch("deformentor_cli.cli.CONFIG_FILE", config), \
-             patch("deformentor_cli.cli.SESSION_FILE", session):
+             patch("deformentor_cli.cli.SESSION_FILE", session), \
+             patch("deformentor_cli.cli.OAUTH_FILE", oauth), \
+             patch("deformentor_cli.cli.OAUTH_LOCK_FILE", lock):
             _reset(args)
 
         captured = capsys.readouterr()
@@ -2208,13 +2205,17 @@ class TestResetCommand:
 
         config = tmp_path / "config.env"
         session = tmp_path / "session.json"
+        oauth = tmp_path / "oauth.json"
+        lock = tmp_path / "oauth.lock"
         config.write_text("PERSONNUMMER=000000000000\n")
 
         args = MagicMock()
         args.quiet = True
 
         with patch("deformentor_cli.cli.CONFIG_FILE", config), \
-             patch("deformentor_cli.cli.SESSION_FILE", session):
+             patch("deformentor_cli.cli.SESSION_FILE", session), \
+             patch("deformentor_cli.cli.OAUTH_FILE", oauth), \
+             patch("deformentor_cli.cli.OAUTH_LOCK_FILE", lock):
             _reset(args)
 
         captured = capsys.readouterr()
@@ -2227,6 +2228,8 @@ class TestResetCommand:
 
         config = tmp_path / "config.env"
         session = tmp_path / "session.json"
+        oauth = tmp_path / "oauth.json"
+        lock = tmp_path / "oauth.lock"
         config.write_text("PERSONNUMMER=000000000000\n")
 
         args = MagicMock()
@@ -2237,6 +2240,8 @@ class TestResetCommand:
 
         with patch("deformentor_cli.cli.CONFIG_FILE", config), \
              patch("deformentor_cli.cli.SESSION_FILE", session), \
+             patch("deformentor_cli.cli.OAUTH_FILE", oauth), \
+             patch("deformentor_cli.cli.OAUTH_LOCK_FILE", lock), \
              patch.object(type(config), "unlink", side_effect=OSError("Permission denied")):
             with pytest.raises(SystemExit) as exc:
                 _reset(args)
@@ -2247,6 +2252,37 @@ class TestResetCommand:
         error = json.loads(captured.err)
         assert error["error"] == "reset_failed"
         assert "Permission denied" not in captured.err
+
+
+class TestSetupStatePersistence:
+    @patch("deformentor_cli.cli.save_oauth_credential")
+    def test_oauth_save_failure_restores_all_previous_state(self, mock_save_oauth, tmp_path):
+        from deformentor_cli.cli import _persist_setup_state
+
+        config = tmp_path / "config.env"
+        session_path = tmp_path / "session.json"
+        oauth = tmp_path / "oauth.json"
+        config.write_text("PERSONNUMMER=111111111111\n")
+        session_path.write_text('[{"old":"session"}]')
+        oauth.write_text('{"refresh_token":"old"}')
+        session = MagicMock()
+        session.cookies = requests.cookies.RequestsCookieJar()
+        mock_save_oauth.side_effect = RuntimeError("save failed")
+
+        with patch("deformentor_cli.cli.CONFIG_FILE", config), \
+             patch("deformentor_cli.cli.SESSION_FILE", session_path), \
+             patch("deformentor_cli.cli.OAUTH_FILE", oauth):
+            with pytest.raises(RuntimeError):
+                _persist_setup_state(
+                    "222222222222",
+                    session,
+                    {"refresh_token": "new"},
+                    quiet=True,
+                )
+
+        assert config.read_text() == "PERSONNUMMER=111111111111\n"
+        assert session_path.read_text() == '[{"old":"session"}]'
+        assert oauth.read_text() == '{"refresh_token":"old"}'
 
 
 class TestConfigFilePermissions:

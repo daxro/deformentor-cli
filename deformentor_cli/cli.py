@@ -9,6 +9,7 @@ from datetime import date, datetime, timedelta
 from importlib.metadata import version as _pkg_version, PackageNotFoundError
 
 import requests
+import portalocker
 from dotenv import dotenv_values
 
 try:
@@ -18,7 +19,8 @@ except ImportError:
     _HAS_ARGCOMPLETE = False
 
 from deformentor_cli.errors import (
-    AuthenticationError, FrejaError, FrejaHttpError, UpstreamStateError, emit_error,
+    AuthenticationError, FrejaError, FrejaHttpError, OAuthSetupRequired,
+    UpstreamStateError, emit_error,
     EXIT_AUTH, EXIT_ERROR, EXIT_NETWORK, EXIT_NOT_FOUND, EXIT_USAGE,
 )
 from deformentor_cli.api import (
@@ -28,8 +30,13 @@ from deformentor_cli.api import (
     normalize_time_registration_comment, save_time_registration_comment, switch_child,
     validate_attachment_url,
 )
-from deformentor_cli.paths import CONFIG_FILE, SESSION_FILE, write_private_text
-from deformentor_cli.session import login, new_session, load_session, save_session, verify_authenticated
+from deformentor_cli.paths import (
+    CONFIG_FILE, OAUTH_FILE, OAUTH_LOCK_FILE, SESSION_FILE, write_private_text,
+)
+from deformentor_cli.session import (
+    HTTP_TIMEOUT, login, load_session, new_session, oauth_state, save_oauth_credential,
+    save_session, setup_login, verify_authenticated,
+)
 from stockholm_freja import FrejaInputError, validate_personnummer
 
 _LOGO_LINES = [
@@ -109,9 +116,11 @@ def _get_status():
     status = {
         "configured": bool(personnummer),
         "session": None,
+        "oauth": oauth_state(OAUTH_FILE),
         "children": [],
         "config_path": str(CONFIG_FILE),
         "session_path": str(SESSION_FILE),
+        "oauth_path": str(OAUTH_FILE),
     }
 
     if personnummer:
@@ -139,10 +148,19 @@ def _print_status(status):
 
     print(f"Config: {status['config_path']}")
     print(f"Session: {status['session']}")
+    print(f"OAuth: {status['oauth']}")
     if status["session"] == "expired":
-        print("  Run any command to re-authenticate.")
+        if status["oauth"] == "configured":
+            print("  The next command will renew the session automatically.")
+        elif status["oauth"] == "invalid":
+            print("  Run deformentor setup and approve Freja to renew authentication.")
+        else:
+            print("  Run any command to re-authenticate with Freja.")
     if status["session"] == "none":
-        print("  Run any command to start a session.")
+        if status["oauth"] == "configured":
+            print("  The next command will create a session automatically.")
+        else:
+            print("  Run any command to start a session.")
     if status["children"]:
         print("Children:")
         for child in status["children"]:
@@ -291,18 +309,25 @@ def _write_config(content, quiet=False):
     _progress(f"Saved to {CONFIG_FILE}", quiet)
 
 
-def _persist_setup_state(personnummer, session, quiet=False):
-    """Replace setup state only after login, restoring config on save failure."""
-    previous_config = CONFIG_FILE.read_text() if CONFIG_FILE.exists() else None
+def _persist_setup_state(personnummer, session, oauth_credential, quiet=False):
+    """Replace all setup state, restoring every prior file on save failure."""
+    paths = (CONFIG_FILE, SESSION_FILE, OAUTH_FILE)
+    previous = {
+        path: path.read_text(encoding="utf-8") if path.exists() else None
+        for path in paths
+    }
     try:
-        _write_config(f"PERSONNUMMER={personnummer}\n", quiet)
+        _write_config(f"PERSONNUMMER={personnummer}\n", quiet=True)
         save_session(session, str(SESSION_FILE))
+        save_oauth_credential(oauth_credential, OAUTH_FILE)
     except Exception:
-        if previous_config is None:
-            CONFIG_FILE.unlink(missing_ok=True)
-        else:
-            write_private_text(CONFIG_FILE, previous_config)
+        for path, content in previous.items():
+            if content is None:
+                path.unlink(missing_ok=True)
+            else:
+                write_private_text(path, content)
         raise
+    _progress(f"Saved to {CONFIG_FILE}", quiet)
 
 
 def _progress(message, quiet=False):
@@ -316,7 +341,7 @@ def _get_version():
     try:
         return _pkg_version("deformentor-cli")
     except PackageNotFoundError:
-        return "0.2.0-dev"
+        return "0.3.0-dev"
 
 
 class _DeformentorParser(argparse.ArgumentParser):
@@ -465,7 +490,7 @@ def _exit_broken_pipe():
 def _run_cli():
     parser = _DeformentorParser(
         prog="deformentor",
-        description="Fetch school notifications and messages from InfoMentor via Freja eID+.",
+        description="Fetch school notifications and messages from InfoMentor with reusable OAuth authentication.",
         epilog="""examples:
   deformentor notifications                  Notifications from last 30 days
   deformentor notifications --child CHILD_NAME  Filter by child
@@ -500,9 +525,12 @@ def _run_cli():
                                default=argparse.SUPPRESS, help="Comma-separated list of fields to include in output")
 
     subparsers = parser.add_subparsers(dest="command", title="commands", parser_class=_DeformentorParser)
-    setup_parser = subparsers.add_parser("setup", parents=[_base_flags], help="Configure login",
+    setup_parser = subparsers.add_parser("setup", parents=[_base_flags], help="Configure or renew OAuth login",
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    setup_parser.add_argument("--personnummer", help="Personnummer to use for setup")
+    setup_parser.add_argument(
+        "--personnummer",
+        help="Personnummer for initial setup or an account change; otherwise reuse the stored value",
+    )
     notif_parser = subparsers.add_parser("notifications", parents=[_global_flags],
         help="Fetch notifications and messages for all children",
         epilog="""examples:
@@ -568,7 +596,7 @@ safety:
     att2_parser.add_argument("--child", help="Switch to this child's context before fetching")
     status_parser = subparsers.add_parser("status", parents=[_global_flags], help="Show configuration and session status")
     status_parser.add_argument("--json", dest="json_output", action="store_true", help="Output status as JSON to stdout")
-    subparsers.add_parser("reset", parents=[_base_flags], help="Remove all config and session files")
+    subparsers.add_parser("reset", parents=[_base_flags], help="Remove configuration, session, and OAuth credentials")
 
     if _HAS_ARGCOMPLETE:
         argcomplete.autocomplete(parser)
@@ -613,6 +641,12 @@ safety:
         _exit_broken_pipe()
     except KeyboardInterrupt:
         emit_error("interrupted", "Interrupted by user.", exit_code=130)
+    except OAuthSetupRequired:
+        emit_error(
+            "oauth_setup_required",
+            "OAuth authentication must be renewed. Run `deformentor setup` and approve Freja; your stored personnummer will be reused.",
+            exit_code=EXIT_AUTH,
+        )
     except AuthenticationError:
         emit_error("auth_failed", "InfoMentor authentication failed.", exit_code=EXIT_AUTH)
     except FrejaHttpError as e:
@@ -649,34 +683,26 @@ def _setup(quiet=False, no_input=False, personnummer=None):
         _maybe_print_logo()
     existing = dotenv_values(CONFIG_FILE).get("PERSONNUMMER") if CONFIG_FILE.exists() else None
 
-    if personnummer is None and (no_input or not sys.stdin.isatty()):
+    if personnummer is not None:
+        _validate_personnummer(personnummer)
+    elif existing:
+        _validate_personnummer(existing, stored=True)
+        personnummer = existing
+    elif no_input or not sys.stdin.isatty():
         personnummer = os.environ.get("PERSONNUMMER")
         if not personnummer:
             emit_error(
                 "setup_required",
-                "PERSONNUMMER env var required in non-interactive mode.",
+                "PERSONNUMMER env var required for initial non-interactive setup.",
                 exit_code=EXIT_USAGE,
             )
         _validate_personnummer(personnummer)
-        session = login(personnummer, quiet=quiet)
-        _persist_setup_state(personnummer, session, quiet)
-        _progress("Authenticated.", quiet)
-        _print_status(_get_status())
-        return
-
-    if existing and personnummer is None:
-        _validate_personnummer(existing, stored=True)
-        print("Already configured.", file=sys.stderr)
-        answer = input("Overwrite? [y/N] ").strip().lower()
-        if answer != "y":
-            return
-
-    if personnummer is None:
+    else:
         personnummer = input("Personnummer (12 digits): ").strip()
-    _validate_personnummer(personnummer)
+        _validate_personnummer(personnummer)
 
-    session = login(personnummer, quiet=quiet)
-    _persist_setup_state(personnummer, session, quiet)
+    session, oauth_credential = setup_login(personnummer, quiet=quiet)
+    _persist_setup_state(personnummer, session, oauth_credential, quiet)
     _progress("Authenticated.", quiet)
     _print_status(_get_status())
 
@@ -688,7 +714,13 @@ def _get_session(quiet=False):
     if not personnummer:
         emit_error("not_configured", "PERSONNUMMER not set. Run: deformentor setup", exit_code=EXIT_AUTH)
     _validate_personnummer(personnummer, stored=True)
-    return login(personnummer, session_path=str(SESSION_FILE), quiet=quiet)
+    return login(
+        personnummer,
+        session_path=str(SESSION_FILE),
+        oauth_path=str(OAUTH_FILE),
+        lock_path=str(OAUTH_LOCK_FILE),
+        quiet=quiet,
+    )
 
 
 def _append_destination_log(path, entry):
@@ -928,16 +960,33 @@ def _attachment(args):
 
 
 def _reset(args):
-    """Remove all config and session files."""
+    """Remove configuration, session cookies, and OAuth credentials."""
     deleted = []
     failed = []
-    for path in [CONFIG_FILE, SESSION_FILE]:
-        if path.exists():
-            try:
-                path.unlink()
-                deleted.append(str(path))
-            except OSError:
-                failed.append(str(path))
+    paths = [CONFIG_FILE, SESSION_FILE, OAUTH_FILE]
+
+    def delete_state():
+        for path in paths:
+            if path.exists():
+                try:
+                    path.unlink()
+                    deleted.append(str(path))
+                except OSError:
+                    failed.append(str(path))
+
+    try:
+        if OAUTH_FILE.exists() or OAUTH_LOCK_FILE.exists():
+            OAUTH_LOCK_FILE.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            with portalocker.Lock(str(OAUTH_LOCK_FILE), mode="a", timeout=HTTP_TIMEOUT):
+                delete_state()
+        else:
+            delete_state()
+    except portalocker.exceptions.LockException:
+        emit_error(
+            "reset_failed",
+            "Could not reset authentication while another Deformentor process is using it.",
+            exit_code=EXIT_ERROR,
+        )
     if failed:
         emit_error(
             "reset_failed",

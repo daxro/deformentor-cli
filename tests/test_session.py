@@ -11,10 +11,12 @@ import requests
 import requests.cookies
 import pytest
 
-from deformentor_cli.errors import AuthenticationError
+from deformentor_cli.errors import AuthenticationError, OAuthSetupRequired
 from deformentor_cli.session import (
-    follow_redirects, parse_form_action, parse_hidden_fields, handle_saml_chain,
-    login, save_session, load_session, validate_auth_url, verify_authenticated,
+    _build_pairing_url, _oauth_callback_code, follow_redirects, parse_form_action,
+    parse_hidden_fields, handle_saml_chain, load_oauth_credential, login,
+    oauth_state, pair_oauth, refresh_oauth, save_oauth_credential, save_session,
+    setup_login, load_session, validate_auth_url, verify_authenticated,
 )
 
 
@@ -544,3 +546,212 @@ class TestSanitizedHttpLogging:
         assert "000000000000" not in output
         assert "Authorization" not in output
         logging.getLogger("deformentor_cli.http").handlers.clear()
+
+
+class TestOAuthCredentialState:
+    def test_missing_invalid_and_configured_states(self, tmp_path):
+        path = tmp_path / "oauth.json"
+        assert oauth_state(path) == "missing"
+        path.write_text("not json")
+        assert oauth_state(path) == "invalid"
+        path.write_text('{"refresh_token":"refresh","legacy":"ignored"}')
+        assert oauth_state(path) == "configured"
+        assert load_oauth_credential(path) == {"refresh_token": "refresh"}
+
+    def test_invalid_credential_requires_setup(self, tmp_path):
+        path = tmp_path / "oauth.json"
+        path.write_text("{}")
+        with pytest.raises(OAuthSetupRequired):
+            load_oauth_credential(path)
+
+    def test_save_uses_minimal_schema_and_private_permissions(self, tmp_path):
+        path = tmp_path / "oauth.json"
+        save_oauth_credential({"refresh_token": "replacement", "extra": "ignored"}, path)
+        assert json.loads(path.read_text()) == {"refresh_token": "replacement"}
+        assert os.stat(path).st_mode & 0o777 == 0o600
+
+
+class TestOAuthPairing:
+    def test_builds_official_mobile_authorization_url(self):
+        template = (
+            "https://im.infomentor.se/Authentication/Authentication/LoginOAuth2"
+            "?deviceIdentifier={DeviceIdentifier}&deviceFriendlyName={DeviceFriendlyName}"
+            "&deviceType={DeviceType}"
+        )
+        url = _build_pairing_url(template)
+        assert "{Device" not in url
+        assert "client_id=notificationapp" in url
+        assert "scope=IM2-API-NOTIFICATION" in url
+        assert "redirect_uri=InfomentorNotification%3A%2F%2Foauth2Callback" in url
+
+    def test_rejects_unexpected_pairing_endpoint(self):
+        with pytest.raises(AuthenticationError, match="authorization endpoint"):
+            _build_pairing_url("https://im.infomentor.se/unexpected")
+
+    def test_accepts_only_exact_custom_callback(self):
+        callback = "InfomentorNotification://oauth2Callback?code=synthetic-code"
+        assert _oauth_callback_code(callback) == "synthetic-code"
+        with pytest.raises(AuthenticationError, match="callback"):
+            _oauth_callback_code("InfomentorNotification://other?code=synthetic-code")
+
+    def test_pairs_and_returns_refresh_token(self):
+        session = MagicMock()
+        metadata = MagicMock()
+        metadata.json.return_value = {
+            "authenticationUrl": (
+                "https://im.infomentor.se/Authentication/Authentication/LoginOAuth2"
+                "?deviceIdentifier={DeviceIdentifier}&deviceFriendlyName={DeviceFriendlyName}"
+                "&deviceType={DeviceType}"
+            ),
+            "tokenUrl": "https://im.infomentor.se/Authentication/OAuth2/Token",
+        }
+        authorize = MagicMock(
+            headers={"Location": "InfomentorNotification://oauth2Callback?code=synthetic-code"}
+        )
+        token = MagicMock()
+        token.json.return_value = {
+            "access_token": "access",
+            "refresh_token": "refresh",
+        }
+        session.post.side_effect = [metadata, token]
+        session.get.return_value = authorize
+
+        assert pair_oauth(session) == {"refresh_token": "refresh"}
+        assert session.get.call_count == 1
+        token_call = session.post.call_args_list[1]
+        assert token_call.args[0] == "https://im.infomentor.se/Authentication/OAuth2/Token"
+        assert token_call.kwargs["allow_redirects"] is False
+
+    def test_rejects_pairing_metadata_token_endpoint(self):
+        session = MagicMock()
+        metadata = MagicMock()
+        metadata.json.return_value = {
+            "authenticationUrl": (
+                "https://im.infomentor.se/Authentication/Authentication/LoginOAuth2"
+                "?deviceIdentifier={DeviceIdentifier}"
+            ),
+            "tokenUrl": "https://evil.example/token",
+        }
+        authorize = MagicMock(
+            headers={"Location": "InfomentorNotification://oauth2Callback?code=synthetic-code"}
+        )
+        session.post.return_value = metadata
+        session.get.return_value = authorize
+        with pytest.raises(AuthenticationError, match="token endpoint"):
+            pair_oauth(session)
+
+
+class TestOAuthRefresh:
+    @patch("deformentor_cli.session.save_oauth_credential")
+    @patch("deformentor_cli.session.requests.post")
+    def test_rotates_and_saves_replacement(self, mock_post, mock_save, tmp_path):
+        path = tmp_path / "oauth.json"
+        path.write_text('{"refresh_token":"old"}')
+        response = MagicMock(status_code=200)
+        response.json.return_value = {
+            "access_token": "access",
+            "refresh_token": "replacement",
+        }
+        mock_post.return_value = response
+
+        assert refresh_oauth(path) == "access"
+        mock_save.assert_called_once_with({"refresh_token": "replacement"}, path)
+
+    @patch("deformentor_cli.session.requests.post")
+    def test_rejected_refresh_requires_setup_without_raw_body(self, mock_post, tmp_path):
+        path = tmp_path / "oauth.json"
+        path.write_text('{"refresh_token":"old"}')
+        mock_post.return_value = MagicMock(status_code=400, text="sensitive upstream body")
+        with pytest.raises(OAuthSetupRequired) as error:
+            refresh_oauth(path)
+        assert "sensitive" not in str(error.value)
+
+
+class TestOAuthLoginPrecedence:
+    @patch("deformentor_cli.session._freja_web_login")
+    @patch("deformentor_cli.session._try_saved_session", return_value=True)
+    def test_valid_cookie_avoids_oauth_and_freja(self, mock_cached, mock_freja):
+        session = MagicMock()
+        assert login("0000000000", _session=session, session_path="session.json", oauth_path="oauth.json") is session
+        mock_freja.assert_not_called()
+
+    @patch("deformentor_cli.session.save_session")
+    @patch("deformentor_cli.session.oauth_web_session")
+    @patch("deformentor_cli.session.refresh_oauth", return_value="access")
+    @patch("deformentor_cli.session.oauth_state", return_value="configured")
+    @patch("deformentor_cli.session._try_saved_session", side_effect=[False, False])
+    @patch("deformentor_cli.session._freja_web_login")
+    def test_expired_cookie_renews_with_oauth(
+        self, mock_freja, mock_cached, mock_state, mock_refresh, mock_bridge, mock_save, tmp_path
+    ):
+        renewed = MagicMock()
+        mock_bridge.return_value = renewed
+        result = login(
+            "0000000000",
+            session_path=str(tmp_path / "session.json"),
+            oauth_path=str(tmp_path / "oauth.json"),
+            lock_path=str(tmp_path / "oauth.lock"),
+        )
+        assert result is renewed
+        mock_refresh.assert_called_once()
+        mock_save.assert_called_once_with(renewed, str(tmp_path / "session.json"))
+        mock_freja.assert_not_called()
+
+    @patch("deformentor_cli.session.refresh_oauth")
+    @patch("deformentor_cli.session.oauth_state", return_value="configured")
+    @patch("deformentor_cli.session._try_saved_session", side_effect=[False, True])
+    def test_waiting_process_rechecks_cookies_before_rotating(
+        self, mock_cached, mock_state, mock_refresh, tmp_path
+    ):
+        result = login(
+            "0000000000",
+            session_path=str(tmp_path / "session.json"),
+            oauth_path=str(tmp_path / "oauth.json"),
+            lock_path=str(tmp_path / "oauth.lock"),
+        )
+        assert result is not None
+        mock_refresh.assert_not_called()
+
+    @patch("deformentor_cli.session.refresh_oauth", side_effect=OAuthSetupRequired("rejected"))
+    @patch("deformentor_cli.session.oauth_state", return_value="configured")
+    @patch("deformentor_cli.session._try_saved_session", side_effect=[False, False])
+    @patch("deformentor_cli.session._freja_web_login")
+    def test_rejected_oauth_does_not_fall_back_to_freja(
+        self, mock_freja, mock_cached, mock_state, mock_refresh, tmp_path
+    ):
+        with pytest.raises(OAuthSetupRequired):
+            login(
+                "0000000000",
+                session_path=str(tmp_path / "session.json"),
+                oauth_path=str(tmp_path / "oauth.json"),
+                lock_path=str(tmp_path / "oauth.lock"),
+            )
+        mock_freja.assert_not_called()
+
+    @patch("deformentor_cli.session.save_session")
+    @patch("deformentor_cli.session.oauth_state", return_value="missing")
+    @patch("deformentor_cli.session._try_saved_session", return_value=False)
+    @patch("deformentor_cli.session._freja_web_login")
+    def test_missing_oauth_preserves_legacy_freja(self, mock_freja, mock_cached, mock_state, mock_save):
+        session = MagicMock()
+        mock_freja.return_value = session
+        assert login(
+            "0000000000",
+            _session=session,
+            session_path="session.json",
+            oauth_path="oauth.json",
+        ) is session
+        mock_freja.assert_called_once()
+        mock_save.assert_called_once_with(session, "session.json")
+
+    @patch("deformentor_cli.session.verify_authenticated")
+    @patch("deformentor_cli.session.pair_oauth", return_value={"refresh_token": "refresh"})
+    @patch("deformentor_cli.session._freja_web_login")
+    def test_explicit_setup_pairs_oauth(self, mock_freja, mock_pair, mock_verify):
+        session = MagicMock()
+        mock_freja.return_value = session
+        assert setup_login("0000000000", _session=session) == (
+            session,
+            {"refresh_token": "refresh"},
+        )
+        mock_pair.assert_called_once_with(session)

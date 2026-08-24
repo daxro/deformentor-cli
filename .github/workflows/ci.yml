@@ -56,7 +56,7 @@ jobs:
           wheel="$(find dist -name '*.whl' -print -quit)"
           uv run --isolated --no-project --with "$wheel" deformentor --version
           uv run --isolated --no-project --with "$wheel" python -c \
-            'from importlib.metadata import metadata, version; m = metadata("deformentor-cli"); assert version("deformentor-cli") == "0.2.0"; assert m["License-Expression"] == "MIT"; assert m["Project-URL"]'
+            'from importlib.metadata import metadata, version; m = metadata("deformentor-cli"); assert version("deformentor-cli") == "0.3.0"; assert m["License-Expression"] == "MIT"; assert m["Project-URL"]'
           uv run --isolated --no-project python -c \
             'import sys, zipfile; names = zipfile.ZipFile(sys.argv[1]).namelist(); assert any(name.endswith(".dist-info/licenses/LICENSE") for name in names)' \
             "$wheel"
