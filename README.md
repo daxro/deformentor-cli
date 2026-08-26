@@ -164,6 +164,15 @@ Configuration, session, and OAuth states and paths are reported by:
 deformentor status --json
 ```
 
+Status is observational: it verifies the saved web session but does not rotate
+the OAuth credential or create a new session. Consumers should use
+`can_authenticate_unattended` as the aggregate readiness signal and
+`action_required` for remediation. In particular, `session: "expired"` with
+`oauth: "configured"` is ready for unattended use; the next normal command
+renews the web session automatically. Only an actual
+`oauth_setup_required` error proves that the stored OAuth credential was
+rejected and Freja approval is needed.
+
 ## Changes in 0.3.0
 
 Version `0.3.0` adds OAuth session renewal. After one explicit Freja setup, expired InfoMentor web sessions are recreated through a rotating, privately stored OAuth refresh token. Existing installations remain compatible, recovery setup reuses the stored personnummer, and status and reset now include OAuth state.

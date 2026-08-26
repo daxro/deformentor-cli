@@ -713,6 +713,44 @@ class TestValidatePersonnummer:
 
 
 class TestStatus:
+    @patch("deformentor_cli.cli.load_session", return_value=False)
+    @patch("deformentor_cli.cli.new_session")
+    @patch("deformentor_cli.cli.dotenv_values")
+    @patch("deformentor_cli.cli.oauth_state")
+    def test_human_output_never_exposes_unexpected_oauth_state(
+        self, mock_oauth_state, mock_dotenv, _mock_new_session, _mock_load_session, capsys
+    ):
+        from deformentor_cli.cli import _status
+
+        mock_dotenv.return_value = {"PERSONNUMMER": "000000000000"}
+        mock_oauth_state.return_value = "sensitive-refresh-token"
+        args = MagicMock(json_output=False)
+
+        _status(args)
+
+        output = capsys.readouterr().out
+        assert "sensitive-refresh-token" not in output
+        assert "OAuth: invalid" in output
+        assert "Ready: no" in output
+
+    @patch("deformentor_cli.cli.dotenv_values")
+    @patch("deformentor_cli.cli.oauth_state")
+    def test_json_never_exposes_unexpected_oauth_state(self, mock_oauth_state, mock_dotenv, capsys):
+        from deformentor_cli.cli import _status
+
+        mock_dotenv.return_value = {}
+        mock_oauth_state.return_value = "sensitive-refresh-token"
+        args = MagicMock(json_output=True, fields=None)
+
+        _status(args)
+
+        output = capsys.readouterr().out
+        assert "sensitive-refresh-token" not in output
+        data = json.loads(output)
+        assert data["oauth"] == "invalid"
+        assert data["can_authenticate_unattended"] is False
+        assert data["action_required"] == "run_setup"
+
     @patch("deformentor_cli.cli.get_children")
     @patch("deformentor_cli.cli.verify_authenticated")
     @patch("deformentor_cli.cli.new_session")
@@ -735,6 +773,7 @@ class TestStatus:
         captured = capsys.readouterr()
         assert "personnummer" not in captured.out.lower()
         assert "valid" in captured.out.lower()
+        assert "Ready: yes" in captured.out
         assert "Student A" in captured.out
         assert "Student B" in captured.out
 
@@ -747,6 +786,7 @@ class TestStatus:
         _status(args)
         captured = capsys.readouterr()
         assert "Not configured" in captured.out
+        assert "Ready: no" in captured.out
         assert "deformentor setup" in captured.out
 
     @patch("deformentor_cli.cli.verify_authenticated")
@@ -766,6 +806,7 @@ class TestStatus:
             _status(args)
         captured = capsys.readouterr()
         assert "expired" in captured.out.lower()
+        assert "Ready: yes" in captured.out
         assert "renew the session automatically" in captured.out.lower()
 
     @patch("deformentor_cli.cli.verify_authenticated")
@@ -798,7 +839,8 @@ class TestStatus:
             _status(args)
         captured = capsys.readouterr()
         assert "none" in captured.out.lower()
-        assert "start a session" in captured.out.lower()
+        assert "Ready: no" in captured.out
+        assert "deformentor setup" in captured.out.lower()
 
 
 class TestCalendarCommand:
@@ -1190,6 +1232,35 @@ class TestNonInteractiveSetup:
         assert session_file.read_text() == "{}"
 
 class TestStatusJson:
+    @patch("deformentor_cli.cli.login")
+    @patch("deformentor_cli.cli.get_children", return_value=[])
+    @patch("deformentor_cli.cli.verify_authenticated")
+    @patch("deformentor_cli.cli.new_session")
+    @patch("deformentor_cli.cli.load_session", return_value=True)
+    @patch("deformentor_cli.cli.dotenv_values", return_value={"PERSONNUMMER": "000000000000"})
+    def test_valid_session_is_ready_without_oauth_and_status_does_not_login(
+        self,
+        _mock_dotenv,
+        _mock_load,
+        _mock_session,
+        _mock_verify,
+        _mock_children,
+        mock_login,
+        capsys,
+    ):
+        from deformentor_cli.cli import _status
+
+        args = MagicMock(json_output=True, fields=None)
+        with patch("deformentor_cli.cli.oauth_state", return_value="missing"):
+            _status(args)
+
+        data = json.loads(capsys.readouterr().out)
+        assert data["session"] == "valid"
+        assert data["oauth"] == "missing"
+        assert data["can_authenticate_unattended"] is True
+        assert data["action_required"] is None
+        mock_login.assert_not_called()
+
     @patch("deformentor_cli.cli.get_children")
     @patch("deformentor_cli.cli.verify_authenticated")
     @patch("deformentor_cli.cli.new_session")
@@ -1213,6 +1284,8 @@ class TestStatusJson:
         assert "personnummer" not in data
         assert data["session"] == "valid"
         assert data["oauth"] == "configured"
+        assert data["can_authenticate_unattended"] is True
+        assert data["action_required"] is None
         assert data["oauth_path"].endswith("oauth.json")
         assert len(data["children"]) == 1
         assert data["children"][0]["id"] == "123"
@@ -1230,10 +1303,13 @@ class TestStatusJson:
         mock_verify.side_effect = AuthenticationError("expired")
         args = MagicMock()
         args.json_output = True
-        _status(args)
+        with patch("deformentor_cli.cli.oauth_state", return_value="configured"):
+            _status(args)
         captured = capsys.readouterr()
         data = json.loads(captured.out)
         assert data["session"] == "expired"
+        assert data["can_authenticate_unattended"] is True
+        assert data["action_required"] is None
 
     @patch("deformentor_cli.cli.dotenv_values")
     def test_json_output_not_configured(self, mock_dotenv, capsys):
@@ -1246,6 +1322,27 @@ class TestStatusJson:
         data = json.loads(captured.out)
         assert data["configured"] is False
         assert data["session"] is None
+        assert data["can_authenticate_unattended"] is False
+        assert data["action_required"] == "run_setup"
+
+    @pytest.mark.parametrize("oauth", ["missing", "invalid"])
+    @patch("deformentor_cli.cli.new_session")
+    @patch("deformentor_cli.cli.load_session", return_value=False)
+    @patch("deformentor_cli.cli.dotenv_values", return_value={"PERSONNUMMER": "000000000000"})
+    def test_json_output_without_unattended_authentication(
+        self, _mock_dotenv, _mock_load, _mock_session, oauth, capsys
+    ):
+        from deformentor_cli.cli import _status
+
+        args = MagicMock(json_output=True, fields=None)
+        with patch("deformentor_cli.cli.oauth_state", return_value=oauth):
+            _status(args)
+
+        data = json.loads(capsys.readouterr().out)
+        assert data["session"] == "none"
+        assert data["oauth"] == oauth
+        assert data["can_authenticate_unattended"] is False
+        assert data["action_required"] == "run_setup"
 
 
 

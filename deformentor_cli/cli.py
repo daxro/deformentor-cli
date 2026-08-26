@@ -108,6 +108,16 @@ def _validate_personnummer(personnummer, stored=False):
     emit_error("invalid_input", "Invalid personnummer. Must be 12 digits (YYYYMMDDXXXX).", exit_code=EXIT_USAGE)
 
 
+def _get_public_oauth_state():
+    """Return only a non-sensitive OAuth status literal for command output."""
+    state = oauth_state(OAUTH_FILE)
+    if state == "configured":
+        return "configured"
+    if state == "missing":
+        return "missing"
+    return "invalid"
+
+
 def _get_status():
     """Build status dict from config and session state."""
     config = dotenv_values(CONFIG_FILE)
@@ -116,7 +126,7 @@ def _get_status():
     status = {
         "configured": bool(personnummer),
         "session": None,
-        "oauth": oauth_state(OAUTH_FILE),
+        "oauth": _get_public_oauth_state(),
         "children": [],
         "config_path": str(CONFIG_FILE),
         "session_path": str(SESSION_FILE),
@@ -137,30 +147,38 @@ def _get_status():
         else:
             status["session"] = "none"
 
+    status["can_authenticate_unattended"] = bool(
+        status["configured"]
+        and (status["session"] == "valid" or status["oauth"] == "configured")
+    )
+    status["action_required"] = (
+        None if status["can_authenticate_unattended"] else "run_setup"
+    )
+
     return status
 
 
 def _print_status(status):
     """Print human-readable status to stdout."""
     if not status["configured"]:
+        print("Ready: no")
         print("Not configured. Run: deformentor setup")
         return
 
     print(f"Config: {status['config_path']}")
     print(f"Session: {status['session']}")
     print(f"OAuth: {status['oauth']}")
+    print(f"Ready: {'yes' if status['can_authenticate_unattended'] else 'no'}")
     if status["session"] == "expired":
         if status["oauth"] == "configured":
             print("  The next command will renew the session automatically.")
-        elif status["oauth"] == "invalid":
-            print("  Run deformentor setup and approve Freja to renew authentication.")
         else:
-            print("  Run any command to re-authenticate with Freja.")
+            print("  Run deformentor setup and approve Freja to enable automatic renewal.")
     if status["session"] == "none":
         if status["oauth"] == "configured":
             print("  The next command will create a session automatically.")
         else:
-            print("  Run any command to start a session.")
+            print("  Run deformentor setup and approve Freja to enable automatic renewal.")
     if status["children"]:
         print("Children:")
         for child in status["children"]:
