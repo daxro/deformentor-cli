@@ -7,7 +7,7 @@ from datetime import date, timedelta
 
 import pytest
 import requests
-from unittest.mock import patch, MagicMock
+from unittest.mock import ANY, patch, MagicMock
 
 
 class TestGetSession:
@@ -844,36 +844,62 @@ class TestStatus:
 
 
 class TestCalendarCommand:
-    @patch("deformentor_cli.cli.get_calendar_event")
-    @patch("deformentor_cli.cli.login")
-    @patch("deformentor_cli.cli.dotenv_values")
-    def test_outputs_json_to_stdout(self, mock_dotenv, mock_login, mock_fetch, capsys):
+    @patch("deformentor_cli.cli.fetch_all_calendar_events")
+    @patch("deformentor_cli.cli.get_children")
+    @patch("deformentor_cli.cli._get_session")
+    def test_outputs_all_children_json(self, mock_session, mock_children, mock_fetch, capsys):
         from deformentor_cli.cli import _calendar
-        mock_dotenv.return_value = {"PERSONNUMMER": "000000000000"}
-        mock_login.return_value = MagicMock()
-        mock_fetch.return_value = {"eventId": "12345", "title": "Studiedag"}
-        args = MagicMock()
-        args.id = "12345"
-        args.child = None
+        mock_children.return_value = [{"name": "Example, Student A", "id": "1"}]
+        mock_fetch.return_value = [
+            {"child": "Example, Student A", "child_id": "1", "status": "complete", "events": [], "error": None}
+        ]
+        args = MagicMock(since=None, until=None, child=None, quiet=True, fields=None)
         _calendar(args)
-        captured = capsys.readouterr()
-        output = json.loads(captured.out)
-        assert output["title"] == "Studiedag"
+        assert json.loads(capsys.readouterr().out) == mock_fetch.return_value
+        mock_fetch.assert_called_once_with(mock_session.return_value, ANY, ANY, mock_children.return_value, allow_partial=True)
 
-    @patch("deformentor_cli.cli._resolve_and_switch_child")
-    @patch("deformentor_cli.cli.get_calendar_event")
-    @patch("deformentor_cli.cli.login")
-    @patch("deformentor_cli.cli.dotenv_values")
-    def test_switches_child_when_provided(self, mock_dotenv, mock_login, mock_fetch, mock_switch, capsys):
+    @patch("deformentor_cli.cli.fetch_all_calendar_events")
+    @patch("deformentor_cli.cli.get_children")
+    @patch("deformentor_cli.cli._get_session")
+    def test_filters_children_before_fetching(self, mock_session, mock_children, mock_fetch, capsys):
         from deformentor_cli.cli import _calendar
-        mock_dotenv.return_value = {"PERSONNUMMER": "000000000000"}
-        mock_login.return_value = MagicMock()
-        mock_fetch.return_value = {"eventId": "12345"}
-        args = MagicMock()
-        args.id = "12345"
-        args.child = "Student A"
+        mock_children.return_value = [
+            {"name": "Example, Student A", "id": "1"},
+            {"name": "Example, Student B", "id": "2"},
+        ]
+        mock_fetch.return_value = []
+        args = MagicMock(since=None, until=None, child="Student A", quiet=True, fields=None)
         _calendar(args)
-        mock_switch.assert_called_once_with(mock_login.return_value, "Student A")
+        assert mock_fetch.call_args.args[3] == [mock_children.return_value[0]]
+        assert mock_fetch.call_args.kwargs["allow_partial"] is False
+
+    @patch("deformentor_cli.cli.fetch_all_calendar_events")
+    @patch("deformentor_cli.cli.get_children")
+    @patch("deformentor_cli.cli._get_session")
+    def test_emits_partial_calendar_data_and_network_error(self, mock_session, mock_children, mock_fetch, capsys):
+        from deformentor_cli.cli import _calendar
+        mock_children.return_value = [{"name": "Example, Student A", "id": "1"}]
+        mock_fetch.return_value = [{
+            "child": "Example, Student A", "child_id": "1", "status": "partial", "events": [], "error": None,
+        }]
+        args = MagicMock(since=None, until=None, child=None, quiet=True, fields=None)
+        with pytest.raises(SystemExit) as exc_info:
+            _calendar(args)
+        assert exc_info.value.code == 5
+        assert json.loads(capsys.readouterr().out)[0]["status"] == "partial"
+
+    def test_calendar_range_defaults_and_rejects_all_or_large_ranges(self):
+        from deformentor_cli import cli
+        with patch("deformentor_cli.cli.date") as mock_date:
+            mock_date.today.return_value = date(2026, 4, 1)
+            mock_date.fromisoformat.side_effect = date.fromisoformat
+            assert cli._resolve_calendar_range(None, None) == ("2026-04-01", "2026-05-01")
+        with pytest.raises(SystemExit) as exc_info:
+            cli._resolve_calendar_range("all", None)
+        assert exc_info.value.code == 2
+        with pytest.raises(SystemExit) as exc_info:
+            cli._resolve_calendar_range("2026-04-01", "2026-05-02")
+        assert exc_info.value.code == 2
 
 
 class TestNewsCommand:
@@ -1559,18 +1585,13 @@ class TestArgparseErrorFormat:
         assert err["error"] == "usage_error"
         assert "message" in err
 
-    def test_missing_required_arg_emits_json_error(self, capsys):
+    def test_calendar_accepts_no_positional_arg(self, capsys):
         import sys
         from deformentor_cli.cli import main
         sys.argv = ["deformentor", "calendar"]
-        with pytest.raises(SystemExit) as exc_info:
+        with patch("deformentor_cli.cli._calendar") as mock_calendar:
             main()
-        assert exc_info.value.code == 2
-        captured = capsys.readouterr()
-        err_lines = [l for l in captured.err.strip().splitlines() if l.startswith("{")]
-        assert len(err_lines) >= 1
-        err = json.loads(err_lines[-1])
-        assert err["error"] == "usage_error"
+        mock_calendar.assert_called_once()
 
 
 class TestVersion:
@@ -1613,20 +1634,9 @@ class TestDebugFlag:
 
 class TestPreAuthValidation:
     @patch("deformentor_cli.cli._get_session")
-    def test_rejects_non_numeric_resource_id_before_auth(self, mock_session):
+    def test_rejects_calendar_range_before_auth(self, mock_session):
         from deformentor_cli.cli import _calendar
-        args = MagicMock(id="not-an-id", child=None, quiet=True, fields=None)
-
-        with pytest.raises(SystemExit) as exc_info:
-            _calendar(args)
-
-        assert exc_info.value.code == 2
-        mock_session.assert_not_called()
-
-    @patch("deformentor_cli.cli._get_session")
-    def test_rejects_non_ascii_numeric_resource_id_before_auth(self, mock_session):
-        from deformentor_cli.cli import _calendar
-        args = MagicMock(id="١٢٣", child=None, quiet=True, fields=None)
+        args = MagicMock(since="2026-01-01", until="2026-02-01", child=None, quiet=True, fields=None)
 
         with pytest.raises(SystemExit) as exc_info:
             _calendar(args)
@@ -1788,24 +1798,6 @@ class TestMainExceptionHandling:
 
         assert exc_info.value.code == 5
         assert json.loads(capsys.readouterr().err)["error"] == "upstream_state_error"
-
-    def test_calendar_detail_unavailable_is_actionable(self, monkeypatch, capsys):
-        import deformentor_cli.cli as cli
-        from deformentor_cli.errors import CalendarDetailUnavailable
-        monkeypatch.setattr("sys.argv", ["deformentor", "calendar", "12345"])
-        monkeypatch.setattr(
-            cli,
-            "_calendar",
-            MagicMock(side_effect=CalendarDetailUnavailable("try the web app; attachments cannot be determined")),
-        )
-
-        with pytest.raises(SystemExit) as exc_info:
-            cli.main()
-
-        assert exc_info.value.code == 5
-        error = json.loads(capsys.readouterr().err)
-        assert error["error"] == "calendar_detail_unavailable"
-        assert "attachments cannot be determined" in error["message"]
 
 
 class TestNoInputFlag:

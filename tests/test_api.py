@@ -1,13 +1,13 @@
 import json
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
 
-from deformentor_cli.api import get_children, switch_child, get_notifications, get_messages, get_attendance_detail, get_calendar_event, get_news_detail, get_meeting_availabilities, fetch_all_notifications, fetch_all_messages, get_attachment, validate_attachment_url
+from deformentor_cli.api import get_children, switch_child, get_notifications, get_messages, get_attendance_detail, get_calendar_entries, get_calendar_attachments, fetch_all_calendar_events, get_news_detail, get_meeting_availabilities, fetch_all_notifications, fetch_all_messages, get_attachment, validate_attachment_url
 from deformentor_cli.api import get_time_registrations, get_time_registration_for_date, get_time_registration_comments, save_time_registration_comment, normalize_time_registration_comment
 from deformentor_cli.api import _normalize_type_name, _extract_id_from_url, _normalize_notification, _normalize_message, _normalize_message_summary
-from deformentor_cli.errors import CalendarDetailUnavailable, UpstreamStateError
+from deformentor_cli.errors import UpstreamStateError
 
 
 MOCK_HOME_DATA = {
@@ -1122,58 +1122,75 @@ class TestGetAttendanceDetail:
             get_attendance_detail(session, "99999")
 
 
-class TestGetCalendarEvent:
-    def test_posts_to_correct_url(self):
+class TestCalendarApi:
+    def test_get_entries_uses_inclusive_date_query(self):
         session = MagicMock()
         resp = MagicMock()
-        resp.json.return_value = {"eventId": "12345", "title": "Studiedag"}
+        resp.json.return_value = []
+        session.get.return_value = resp
+        assert get_calendar_entries(session, "2026-04-01", "2026-04-30") == []
+        url = session.get.call_args[0][0]
+        kwargs = session.get.call_args[1]
+        assert kwargs["params"] == {"startDate": "2026-04-01", "endDate": "2026-04-30"}
+        assert kwargs["headers"]["X-Requested-With"] == "XMLHttpRequest"
+        assert "/CalendarV2/CalendarV2/GetEntries" in url
+
+    def test_get_attachments_sends_event_id_in_body(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.json.return_value = []
         session.post.return_value = resp
-        get_calendar_event(session, "12345")
+        get_calendar_attachments(session, "12345")
         url = session.post.call_args[0][0]
-        assert "/CalendarV2/CalendarV2/GetEvent" in url
-
-    def test_sends_event_id_in_body(self):
-        session = MagicMock()
-        resp = MagicMock()
-        resp.json.return_value = {"eventId": "12345"}
-        session.post.return_value = resp
-        get_calendar_event(session, "12345")
         kwargs = session.post.call_args[1]
-        assert kwargs["json"] == {"eventId": "12345"}
+        assert "/CalendarV2/CalendarV2/GetAttachments" in url
+        assert kwargs["json"] == {"id": "12345"}
 
-    def test_returns_json_response(self):
+    def test_rejects_invalid_entries_response_shape(self):
         session = MagicMock()
         resp = MagicMock()
-        resp.json.return_value = {"eventId": "12345", "title": "Studiedag", "startDate": "2026-04-01"}
-        session.post.return_value = resp
-        result = get_calendar_event(session, "12345")
-        assert result == {"eventId": "12345", "title": "Studiedag", "startDate": "2026-04-01"}
+        resp.json.return_value = {"entries": []}
+        session.get.return_value = resp
+        with pytest.raises(UpstreamStateError, match="invalid calendar entry"):
+            get_calendar_entries(session, "2026-04-01", "2026-04-01")
 
-    def test_sends_ajax_header(self):
+    @patch("deformentor_cli.api.get_calendar_attachments")
+    @patch("deformentor_cli.api.get_calendar_entries")
+    @patch("deformentor_cli.api.switch_child")
+    def test_fetches_attachment_metadata_for_flagged_events(self, mock_switch, mock_entries, mock_attachments):
         session = MagicMock()
-        resp = MagicMock()
-        resp.json.return_value = {}
-        session.post.return_value = resp
-        get_calendar_event(session, "12345")
-        headers = session.post.call_args[1].get("headers", {})
-        assert headers.get("X-Requested-With") == "XMLHttpRequest"
+        mock_entries.return_value = [
+            {"id": "2", "hasAttachments": True, "startDate": "2026-04-01", "startTime": "10:00"},
+            {"id": "1", "hasAttachments": False, "startDate": "2026-04-01", "startTime": "09:00"},
+        ]
+        mock_attachments.return_value = [
+            {"title": "Agenda", "fileType": "pdf", "url": "/Resources/Resource/Download/123"},
+        ]
+        result = fetch_all_calendar_events(
+            session, "2026-04-01", "2026-04-01", [{"name": "Example, Student A", "id": "1"}]
+        )
+        assert mock_switch.call_args.args == (session, "1")
+        mock_attachments.assert_called_once_with(session, "2")
+        assert [event["id"] for event in result[0]["events"]] == ["1", "2"]
+        assert result[0]["events"][0]["attachments"] == []
+        assert result[0]["events"][1]["attachments"][0]["file_type"] == "pdf"
 
-    def test_raises_on_http_error(self):
+    @patch("deformentor_cli.api.get_calendar_entries")
+    @patch("deformentor_cli.api.switch_child")
+    def test_preserves_other_children_after_child_local_server_error(self, mock_switch, mock_entries):
         session = MagicMock()
-        resp = MagicMock()
-        resp.raise_for_status.side_effect = requests.HTTPError("404 Not Found", response=resp)
-        session.post.return_value = resp
-        with pytest.raises(requests.HTTPError, match="404"):
-            get_calendar_event(session, "99999")
-
-    def test_maps_server_error_to_calendar_detail_unavailable(self):
-        session = MagicMock()
-        resp = MagicMock()
-        resp.status_code = 500
-        resp.raise_for_status.side_effect = requests.HTTPError("500 Server Error", response=resp)
-        session.post.return_value = resp
-        with pytest.raises(CalendarDetailUnavailable, match="attachments cannot be determined"):
-            get_calendar_event(session, "99999")
+        response = MagicMock()
+        response.status_code = 500
+        mock_entries.side_effect = [requests.HTTPError(response=response), []]
+        children = [
+            {"name": "Example, Student A", "id": "1"},
+            {"name": "Example, Student B", "id": "2"},
+        ]
+        result = fetch_all_calendar_events(session, "2026-04-01", "2026-04-01", children, allow_partial=True)
+        assert [entry["status"] for entry in result] == ["unavailable", "complete"]
+        assert result[0]["events"] is None
+        assert result[0]["error"]["code"] == "calendar_entries_unavailable"
+        assert mock_switch.call_count == 2
 
 
 class TestGetNewsDetail:

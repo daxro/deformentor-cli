@@ -73,16 +73,22 @@ deformentor messages
 deformentor messages --all-pages --max-pages 10
 deformentor messages -q --fields child,messages.id,messages.subject,messages.date
 
-deformentor calendar EVENT_ID --child STUDENT_NAME
+deformentor calendar --child STUDENT_NAME
+deformentor calendar --since 2026-09-01 --until 2026-09-30
 deformentor attendance REQUEST_ID --child STUDENT_NAME
 deformentor news NEWS_ID --child STUDENT_NAME
 deformentor meeting --child STUDENT_NAME
 ```
 
-Calendar notification summaries are available through `notifications`. InfoMentor's
-current detail endpoint may reject calendar event IDs with a server error; in that
-case `calendar` returns `calendar_detail_unavailable` and cannot determine whether
-the event has attachments. Try again later or use the InfoMentor web app.
+`calendar` lists each selected child's events from today through the next 30 days
+by default. It includes event details and attachment metadata without downloading
+or following attachment URLs. Supply `--since` and `--until` for another inclusive
+window of up to 30 days. This replaces the former `calendar EVENT_ID` lookup.
+
+Calendar results include a per-child `status`. `events: []` means the child's
+calendar was fetched and has no events; `events: null` means it was unavailable.
+When an all-children request is incomplete, completed data is still written to
+stdout, followed by a `calendar_incomplete` error on stderr with exit code 5.
 
 Run any command with `--help` to see its options and examples.
 

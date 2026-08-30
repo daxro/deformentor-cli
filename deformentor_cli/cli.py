@@ -19,13 +19,13 @@ except ImportError:
     _HAS_ARGCOMPLETE = False
 
 from deformentor_cli.errors import (
-    AuthenticationError, CalendarDetailUnavailable, FrejaError, FrejaHttpError, OAuthSetupRequired,
+    AuthenticationError, FrejaError, FrejaHttpError, OAuthSetupRequired,
     UpstreamStateError, emit_error,
     EXIT_AUTH, EXIT_ERROR, EXIT_NETWORK, EXIT_NOT_FOUND, EXIT_USAGE,
 )
 from deformentor_cli.api import (
-    fetch_all_notifications, fetch_all_messages, get_attachment, get_attendance_detail,
-    get_calendar_event, get_children, get_meeting_availabilities, get_news_detail,
+    fetch_all_calendar_events, fetch_all_notifications, fetch_all_messages, get_attachment,
+    get_attendance_detail, get_children, get_meeting_availabilities, get_news_detail,
     get_time_registration_comments, get_time_registration_for_date,
     normalize_time_registration_comment, save_time_registration_comment, switch_child,
     validate_attachment_url,
@@ -90,6 +90,7 @@ def _maybe_print_logo():
 KNOWN_NOTIFICATION_TYPES = {"attendance", "calendar", "news", "meeting", "message"}
 
 _DEFAULT_SINCE_DAYS = 30
+_CALENDAR_WINDOW_DAYS = 30
 # _DEFAULT_UNTIL_DAYS: no default upper bound yet. Reserved for future lookup.
 
 
@@ -228,6 +229,29 @@ def _resolve_until(cli_value):
         return _validate_date_flag(cli_value, "--until")
     # Future: read DEFAULT_UNTIL_DAYS from config and compute date.today() + timedelta(days=days)
     return None
+
+
+def _resolve_calendar_range(since_value, until_value):
+    """Return the bounded, inclusive calendar query range before authentication."""
+    def parse_bound(value, flag_name):
+        if value is None:
+            return None
+        if value.lower() == "all":
+            emit_error("invalid_input", f"{flag_name} must be a real calendar date.", exit_code=EXIT_USAGE)
+        return _validate_date_flag(value, flag_name)
+
+    today = date.today()
+    since = parse_bound(since_value, "--since") or today.isoformat()
+    until = parse_bound(until_value, "--until") or (today + timedelta(days=_CALENDAR_WINDOW_DAYS)).isoformat()
+    if since > until:
+        emit_error("invalid_input", "--since cannot be after --until.", exit_code=EXIT_USAGE)
+    if (date.fromisoformat(until) - date.fromisoformat(since)).days > _CALENDAR_WINDOW_DAYS:
+        emit_error(
+            "invalid_input",
+            f"Calendar date range cannot exceed {_CALENDAR_WINDOW_DAYS} days.",
+            exit_code=EXIT_USAGE,
+        )
+    return since, until
 
 
 def _validate_exact_pickup_date(value):
@@ -572,9 +596,10 @@ def _run_cli():
     msg_parser.add_argument("--until", help="End date (YYYY-MM-DD, inclusive). 'all' for no limit.")
     msg_parser.add_argument("--all-pages", action="store_true", help="Fetch all message pages (default: page 1 only)")
     msg_parser.add_argument("--max-pages", type=int, default=None, help="Maximum pages to fetch with --all-pages (default: 50)")
-    cal_parser = subparsers.add_parser("calendar", parents=[_global_flags], help="Fetch a calendar event by ID")
-    cal_parser.add_argument("id", help="Calendar event ID (from notifications output)")
-    cal_parser.add_argument("--child", help="Switch to this child's context before fetching")
+    cal_parser = subparsers.add_parser("calendar", parents=[_global_flags], help="Fetch calendar events by date range")
+    cal_parser.add_argument("--child", help="Filter by child name (case-insensitive substring match)")
+    cal_parser.add_argument("--since", help="Start date (YYYY-MM-DD, inclusive). Default: today.")
+    cal_parser.add_argument("--until", help="End date (YYYY-MM-DD, inclusive). Default: 30 days from today.")
     att_parser = subparsers.add_parser("attendance", parents=[_global_flags], help="Fetch an attendance / leave request by ID")
     att_parser.add_argument("id", help="Attendance/leave request ID (from notifications output)")
     att_parser.add_argument("--child", help="Switch to this child's context before fetching")
@@ -674,8 +699,6 @@ safety:
         emit_error("auth_failed", f"Freja authentication failed: {e}", exit_code=EXIT_AUTH)
     except FrejaError as e:
         emit_error("auth_failed", f"Freja authentication failed: {e}", exit_code=EXIT_AUTH)
-    except CalendarDetailUnavailable as e:
-        emit_error("calendar_detail_unavailable", str(e), exit_code=EXIT_NETWORK)
     except UpstreamStateError as e:
         emit_error("upstream_state_error", str(e), exit_code=EXIT_NETWORK)
     except requests.HTTPError as e:
@@ -916,12 +939,33 @@ def _messages(args):
 
 
 def _calendar(args):
-    _validate_positive_decimal_id(args.id, "Calendar event ID")
+    since, until = _resolve_calendar_range(args.since, args.until)
     session = _get_session(quiet=args.quiet)
+    children = get_children(session)
     if args.child:
-        _resolve_and_switch_child(session, args.child)
-    _progress("Fetching calendar event...", args.quiet)
-    result = get_calendar_event(session, args.id)
+        child_query = args.child.lower()
+        children = [child for child in children if child_query in child["name"].lower()]
+        if not children:
+            emit_error("child_not_found", f"No child matching '{args.child}'.", exit_code=EXIT_NOT_FOUND)
+    _progress("Fetching calendar events...", args.quiet)
+    result = fetch_all_calendar_events(
+        session, since, until, children, allow_partial=args.child is None,
+    )
+    incomplete = [entry for entry in result if entry["status"] != "complete"]
+    if incomplete:
+        successful = [entry for entry in result if entry["status"] != "unavailable"]
+        if successful:
+            _output_json(result, args)
+            emit_error(
+                "calendar_incomplete",
+                "Calendar data is incomplete for one or more children or events.",
+                exit_code=EXIT_NETWORK,
+            )
+        emit_error(
+            "calendar_unavailable",
+            "InfoMentor could not return calendar entries for the selected children.",
+            exit_code=EXIT_NETWORK,
+        )
     _output_json(result, args)
 
 
