@@ -871,7 +871,72 @@ class TestCalendarCommand:
         args = MagicMock(since=None, until=None, child="Student A", quiet=True, fields=None)
         _calendar(args)
         assert mock_fetch.call_args.args[3] == [mock_children.return_value[0]]
-        assert mock_fetch.call_args.kwargs["allow_partial"] is False
+        assert mock_fetch.call_args.kwargs["allow_partial"] is True
+
+    @patch("deformentor_cli.cli.fetch_all_calendar_events")
+    @patch("deformentor_cli.cli.get_children")
+    @patch("deformentor_cli.cli._get_session")
+    def test_partial_recovery_applies_to_multiple_filtered_children(self, mock_session, mock_children, mock_fetch, capsys):
+        from deformentor_cli.cli import _calendar
+        mock_children.return_value = [
+            {"name": "Example, Student A", "id": "1"},
+            {"name": "Example, Student B", "id": "2"},
+        ]
+        mock_fetch.return_value = [
+            {"child": "Example, Student A", "child_id": "1", "status": "unavailable", "events": None,
+             "error": {"code": "calendar_entries_unavailable"}},
+            {"child": "Example, Student B", "child_id": "2", "status": "complete", "events": [], "error": None},
+        ]
+        args = MagicMock(since=None, until=None, child="Student", quiet=True, fields=None)
+
+        with pytest.raises(SystemExit) as exc_info:
+            _calendar(args)
+
+        assert exc_info.value.code == 5
+        assert mock_fetch.call_args.args[3] == mock_children.return_value
+        assert mock_fetch.call_args.kwargs["allow_partial"] is True
+        captured = capsys.readouterr()
+        assert len(json.loads(captured.out)) == 2
+        assert json.loads(captured.err)["error"] == "calendar_incomplete"
+
+    @patch("deformentor_cli.cli.fetch_all_calendar_events")
+    @patch("deformentor_cli.cli.get_children")
+    @patch("deformentor_cli.cli._get_session")
+    def test_all_unavailable_calendar_has_no_stdout(self, mock_session, mock_children, mock_fetch, capsys):
+        from deformentor_cli.cli import _calendar
+        mock_children.return_value = [{"name": "Example, Student A", "id": "1"}]
+        mock_fetch.return_value = [{
+            "child": "Example, Student A", "child_id": "1", "status": "unavailable", "events": None,
+            "error": {"code": "calendar_entries_unavailable"},
+        }]
+        args = MagicMock(since=None, until=None, child="Student A", quiet=True, fields=None)
+
+        with pytest.raises(SystemExit) as exc_info:
+            _calendar(args)
+
+        assert exc_info.value.code == 5
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert json.loads(captured.err)["error"] == "calendar_unavailable"
+
+    @patch("deformentor_cli.cli.fetch_all_calendar_events")
+    @patch("deformentor_cli.cli.get_children")
+    @patch("deformentor_cli.cli._get_session")
+    def test_partial_calendar_keeps_json_stdout_with_fields_filter(self, mock_session, mock_children, mock_fetch, capsys):
+        from deformentor_cli.cli import _calendar
+        mock_children.return_value = [{"name": "Example, Student A", "id": "1"}]
+        mock_fetch.return_value = [{
+            "child": "Example, Student A", "child_id": "1", "status": "partial", "events": [], "error": None,
+        }]
+        args = MagicMock(since=None, until=None, child=None, quiet=True, fields="child")
+
+        with pytest.raises(SystemExit) as exc_info:
+            _calendar(args)
+
+        assert exc_info.value.code == 5
+        captured = capsys.readouterr()
+        assert json.loads(captured.out) == [{"child": "Example, Student A"}]
+        assert json.loads(captured.err)["error"] == "calendar_incomplete"
 
     @patch("deformentor_cli.cli.fetch_all_calendar_events")
     @patch("deformentor_cli.cli.get_children")

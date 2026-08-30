@@ -7,7 +7,7 @@ from urllib.parse import parse_qs, unquote, urlparse, urlsplit
 
 import requests
 
-from deformentor_cli.errors import UpstreamStateError
+from deformentor_cli.errors import CalendarResponseError, UpstreamStateError
 
 BASE_URL = "https://hub.infomentor.se"
 HTTP_TIMEOUT = 30
@@ -140,9 +140,9 @@ def _calendar_json_list(response, endpoint_name):
     try:
         payload = response.json()
     except ValueError as error:
-        raise UpstreamStateError(f"InfoMentor returned invalid {endpoint_name} data.") from error
+        raise CalendarResponseError(f"InfoMentor returned invalid {endpoint_name} data.") from error
     if not isinstance(payload, list):
-        raise UpstreamStateError(f"InfoMentor returned invalid {endpoint_name} data.")
+        raise CalendarResponseError(f"InfoMentor returned invalid {endpoint_name} data.")
     return payload
 
 
@@ -172,11 +172,11 @@ def get_calendar_attachments(session, event_id):
 
 def _normalize_calendar_attachment(attachment):
     if not isinstance(attachment, dict):
-        raise UpstreamStateError("InfoMentor returned invalid calendar attachment data.")
+        raise CalendarResponseError("InfoMentor returned invalid calendar attachment data.")
     title = attachment.get("title")
     file_type = attachment.get("fileType")
     if not isinstance(title, str) or not isinstance(file_type, str):
-        raise UpstreamStateError("InfoMentor returned invalid calendar attachment data.")
+        raise CalendarResponseError("InfoMentor returned invalid calendar attachment data.")
     try:
         url = validate_attachment_url(attachment.get("url"))
     except ValueError as error:
@@ -186,10 +186,10 @@ def _normalize_calendar_attachment(attachment):
 
 def _calendar_entry_id(entry):
     if not isinstance(entry, dict):
-        raise UpstreamStateError("InfoMentor returned invalid calendar entry data.")
+        raise CalendarResponseError("InfoMentor returned invalid calendar entry data.")
     event_id = entry.get("id")
     if isinstance(event_id, bool) or not isinstance(event_id, (str, int)) or not str(event_id):
-        raise UpstreamStateError("InfoMentor returned invalid calendar entry data.")
+        raise CalendarResponseError("InfoMentor returned invalid calendar entry data.")
     return event_id
 
 
@@ -197,7 +197,7 @@ def _normalize_calendar_entry(entry, attachments, attachments_status="complete",
     event_id = _calendar_entry_id(entry)
     has_attachments = entry.get("hasAttachments")
     if not isinstance(has_attachments, bool):
-        raise UpstreamStateError("InfoMentor returned invalid calendar entry data.")
+        raise CalendarResponseError("InfoMentor returned invalid calendar entry data.")
     return {
         "id": event_id,
         "title": entry.get("title"),
@@ -216,9 +216,20 @@ def _normalize_calendar_entry(entry, attachments, attachments_status="complete",
     }
 
 
+def _calendar_sort_key(event):
+    """Return a safe chronological sort key for a normalized calendar event."""
+    start_date = event["start_date"]
+    start_time = event["start_time"]
+    if start_date is not None and not isinstance(start_date, str):
+        raise CalendarResponseError("InfoMentor returned invalid calendar entry data.")
+    if start_time is not None and not isinstance(start_time, str):
+        raise CalendarResponseError("InfoMentor returned invalid calendar entry data.")
+    return (start_date or "", start_time or "", str(event["id"]))
+
+
 def _is_child_local_calendar_error(error):
     """Return whether an error can safely be represented for one child/event."""
-    if isinstance(error, UpstreamStateError):
+    if isinstance(error, CalendarResponseError):
         return True
     if isinstance(error, requests.HTTPError):
         status_code = getattr(error.response, "status_code", None)
@@ -237,6 +248,34 @@ def fetch_all_calendar_events(session, start_date, end_date, children, allow_par
         switch_child(session, child["id"])
         try:
             entries = get_calendar_entries(session, start_date, end_date)
+            events = []
+            child_is_partial = False
+            for entry in entries:
+                event_id = _calendar_entry_id(entry)
+                has_attachments = entry.get("hasAttachments")
+                if not isinstance(has_attachments, bool):
+                    raise CalendarResponseError("InfoMentor returned invalid calendar entry data.")
+                attachments = []
+                attachments_status = "complete"
+                attachment_error = None
+                if has_attachments:
+                    try:
+                        attachments = [
+                            _normalize_calendar_attachment(item)
+                            for item in get_calendar_attachments(session, event_id)
+                        ]
+                    except Exception as error:
+                        if not allow_partial or not _is_child_local_calendar_error(error):
+                            raise
+                        attachments = None
+                        attachments_status = "unavailable"
+                        attachment_error = _calendar_unavailable_error(
+                            "calendar_attachments_unavailable",
+                            "InfoMentor could not return attachments for this event.",
+                        )
+                        child_is_partial = True
+                events.append(_normalize_calendar_entry(entry, attachments, attachments_status, attachment_error))
+            events.sort(key=_calendar_sort_key)
         except Exception as error:
             if not allow_partial or not _is_child_local_calendar_error(error):
                 raise
@@ -251,34 +290,6 @@ def fetch_all_calendar_events(session, start_date, end_date, children, allow_par
                 ),
             })
             continue
-        events = []
-        child_is_partial = False
-        for entry in entries:
-            event_id = _calendar_entry_id(entry)
-            has_attachments = entry.get("hasAttachments")
-            if not isinstance(has_attachments, bool):
-                raise UpstreamStateError("InfoMentor returned invalid calendar entry data.")
-            attachments = []
-            attachments_status = "complete"
-            attachment_error = None
-            if has_attachments:
-                try:
-                    attachments = [
-                        _normalize_calendar_attachment(item)
-                        for item in get_calendar_attachments(session, event_id)
-                    ]
-                except Exception as error:
-                    if not allow_partial or not _is_child_local_calendar_error(error):
-                        raise
-                    attachments = None
-                    attachments_status = "unavailable"
-                    attachment_error = _calendar_unavailable_error(
-                        "calendar_attachments_unavailable",
-                        "InfoMentor could not return attachments for this event.",
-                    )
-                    child_is_partial = True
-            events.append(_normalize_calendar_entry(entry, attachments, attachments_status, attachment_error))
-        events.sort(key=lambda event: (event["start_date"] or "", event["start_time"] or "", str(event["id"])))
         result.append({
             "child": child["name"],
             "child_id": child["id"],

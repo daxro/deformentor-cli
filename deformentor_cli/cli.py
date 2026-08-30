@@ -599,7 +599,7 @@ def _run_cli():
     cal_parser = subparsers.add_parser("calendar", parents=[_global_flags], help="Fetch calendar events by date range")
     cal_parser.add_argument("--child", help="Filter by child name (case-insensitive substring match)")
     cal_parser.add_argument("--since", help="Start date (YYYY-MM-DD, inclusive). Default: today.")
-    cal_parser.add_argument("--until", help="End date (YYYY-MM-DD, inclusive). Default: 30 days from today.")
+    cal_parser.add_argument("--until", help="End date (YYYY-MM-DD, inclusive). Default: 30 days from today; maximum 30-day difference (31 dates).")
     att_parser = subparsers.add_parser("attendance", parents=[_global_flags], help="Fetch an attendance / leave request by ID")
     att_parser.add_argument("id", help="Attendance/leave request ID (from notifications output)")
     att_parser.add_argument("--child", help="Switch to this child's context before fetching")
@@ -949,7 +949,7 @@ def _calendar(args):
             emit_error("child_not_found", f"No child matching '{args.child}'.", exit_code=EXIT_NOT_FOUND)
     _progress("Fetching calendar events...", args.quiet)
     result = fetch_all_calendar_events(
-        session, since, until, children, allow_partial=args.child is None,
+        session, since, until, children, allow_partial=True,
     )
     incomplete = [entry for entry in result if entry["status"] != "complete"]
     if incomplete:

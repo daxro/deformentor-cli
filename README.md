@@ -83,16 +83,27 @@ deformentor meeting --child STUDENT_NAME
 `calendar` lists each selected child's events from today through the next 30 days
 by default. It includes event details and attachment metadata without downloading
 or following attachment URLs. Supply `--since` and `--until` for another inclusive
-window of up to 30 days. This replaces the former `calendar EVENT_ID` lookup.
+window spanning at most 30 days (up to 31 calendar dates). This replaces the former
+`calendar EVENT_ID` lookup; there is no compatibility alias because InfoMentor's
+former event-detail endpoint cannot reliably provide that command's result.
 
 Calendar results include a per-child `status`. `events: []` means the child's
 calendar was fetched and has no events; `events: null` means it was unavailable.
-When an all-children request is incomplete, completed data is still written to
+When a selected-children request is incomplete, calendar result data is still written to
 stdout, followed by a `calendar_incomplete` error on stderr with exit code 5.
+Malformed calendar entries make that child's events unavailable; malformed or 5xx
+attachment lookups leave that event's attachments unavailable. Authentication,
+context-switch, client-response, and connectivity failures remain command failures.
 
 Run any command with `--help` to see its options and examples.
 
 `--child` is a case-insensitive substring filter for list commands. For commands that switch child context, the match must be exact or unique. Ambiguous matches fail instead of selecting a child silently.
+
+`notifications` and `messages` retain their established atomic all-children fetch:
+their `--child` filter is applied after retrieval, so any upstream failure prevents
+output. `calendar` is the exception because its per-child/event result schema can
+represent narrowly classified upstream omissions without concealing a safety or
+authentication failure.
 
 ### Download attachments
 

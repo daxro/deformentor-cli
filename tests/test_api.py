@@ -1192,6 +1192,85 @@ class TestCalendarApi:
         assert result[0]["error"]["code"] == "calendar_entries_unavailable"
         assert mock_switch.call_count == 2
 
+    @patch("deformentor_cli.api.get_calendar_entries")
+    @patch("deformentor_cli.api.switch_child")
+    def test_malformed_entry_makes_only_that_child_unavailable(self, mock_switch, mock_entries):
+        session = MagicMock()
+        mock_entries.side_effect = [[{"id": "1", "hasAttachments": "yes"}], []]
+        children = [
+            {"name": "Example, Student A", "id": "1"},
+            {"name": "Example, Student B", "id": "2"},
+        ]
+
+        result = fetch_all_calendar_events(session, "2026-04-01", "2026-04-01", children, allow_partial=True)
+
+        assert [entry["status"] for entry in result] == ["unavailable", "complete"]
+
+    @patch("deformentor_cli.api.get_calendar_attachments")
+    @patch("deformentor_cli.api.get_calendar_entries")
+    @patch("deformentor_cli.api.switch_child")
+    def test_malformed_entry_sort_field_makes_only_that_child_unavailable(
+        self, mock_switch, mock_entries, mock_attachments,
+    ):
+        session = MagicMock()
+        mock_entries.side_effect = [[
+            {"id": "1", "hasAttachments": False, "startDate": {"unexpected": "object"}},
+        ], []]
+        children = [
+            {"name": "Example, Student A", "id": "1"},
+            {"name": "Example, Student B", "id": "2"},
+        ]
+
+        result = fetch_all_calendar_events(session, "2026-04-01", "2026-04-01", children, allow_partial=True)
+
+        assert [entry["status"] for entry in result] == ["unavailable", "complete"]
+        mock_attachments.assert_not_called()
+
+    @patch("deformentor_cli.api.get_calendar_entries")
+    @patch("deformentor_cli.api.switch_child")
+    def test_client_error_is_not_downgraded_to_partial(self, mock_switch, mock_entries):
+        session = MagicMock()
+        response = MagicMock()
+        response.status_code = 404
+        error = requests.HTTPError(response=response)
+        mock_entries.side_effect = error
+
+        with pytest.raises(requests.HTTPError):
+            fetch_all_calendar_events(
+                session, "2026-04-01", "2026-04-01", [{"name": "Example, Student A", "id": "1"}],
+                allow_partial=True,
+            )
+
+    @patch("deformentor_cli.api.get_calendar_entries")
+    @patch("deformentor_cli.api.switch_child")
+    def test_unsafe_attachment_url_is_not_downgraded_to_partial(self, mock_switch, mock_entries):
+        session = MagicMock()
+        mock_entries.return_value = [{"id": "1", "hasAttachments": True}]
+        with patch("deformentor_cli.api.get_calendar_attachments", return_value=[
+            {"title": "Agenda", "fileType": "pdf", "url": "https://unsafe.example/file"},
+        ]):
+            with pytest.raises(UpstreamStateError, match="unsafe calendar attachment URL"):
+                fetch_all_calendar_events(
+                    session, "2026-04-01", "2026-04-01", [{"name": "Example, Student A", "id": "1"}],
+                    allow_partial=True,
+                )
+
+    @patch("deformentor_cli.api.get_calendar_entries")
+    @patch("deformentor_cli.api.switch_child")
+    def test_malformed_attachment_is_event_local_partial(self, mock_switch, mock_entries):
+        session = MagicMock()
+        mock_entries.return_value = [{"id": "1", "hasAttachments": True}]
+        with patch("deformentor_cli.api.get_calendar_attachments", return_value=[{"title": "Agenda"}]):
+            result = fetch_all_calendar_events(
+                session, "2026-04-01", "2026-04-01", [{"name": "Example, Student A", "id": "1"}],
+                allow_partial=True,
+            )
+
+        event = result[0]["events"][0]
+        assert result[0]["status"] == "partial"
+        assert event["attachments"] is None
+        assert event["attachment_error"]["code"] == "calendar_attachments_unavailable"
+
 
 class TestGetNewsDetail:
     def test_posts_to_get_news_list_url(self):
