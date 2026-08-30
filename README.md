@@ -57,7 +57,7 @@ deformentor setup
 
 The CLI reuses the stored personnummer without displaying it or asking you to enter it again. You only approve Freja. To change accounts, explicitly provide the new value with `setup --personnummer NEW_VALUE`.
 
-Authentication uses a valid saved web session first. When that session expires, the CLI rotates the OAuth refresh token and creates a new web session automatically. InfoMentor reports a 10-minute access-token lifetime but no refresh-token lifetime; a revoked or rejected refresh token requires setup again. Installations created before OAuth support continue to use Freja until setup is rerun once.
+Authentication uses a valid saved web session first. When that session expires, the CLI rotates the OAuth refresh token and creates a new web session automatically. InfoMentor reports a 10-minute access-token lifetime but no refresh-token lifetime; a missing, invalid, revoked, or rejected OAuth credential requires setup again.
 
 ## Use the CLI
 
@@ -192,12 +192,12 @@ the OAuth credential or create a new session. Consumers should use
 `action_required` for remediation. In particular, `session: "expired"` with
 `oauth: "configured"` is ready for unattended use; the next normal command
 renews the web session automatically. Only an actual
-`oauth_setup_required` error proves that the stored OAuth credential was
-rejected and Freja approval is needed.
+`oauth_setup_required` error indicates that OAuth authentication is missing,
+invalid, or rejected and Freja approval is needed.
 
 ## Changes in 0.3.0
 
-Version `0.3.0` adds OAuth session renewal. After one explicit Freja setup, expired InfoMentor web sessions are recreated through a rotating, privately stored OAuth refresh token. Existing installations remain compatible, recovery setup reuses the stored personnummer, and status and reset now include OAuth state.
+Version `0.3.0` adds OAuth session renewal. After one explicit Freja setup, expired InfoMentor web sessions are recreated through a rotating, privately stored OAuth refresh token. Recovery setup reuses the stored personnummer, and status and reset include OAuth state.
 
 ## Changes in 0.2.0
 

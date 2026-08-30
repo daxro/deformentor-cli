@@ -24,7 +24,6 @@ class TestGetSession:
 
         assert result is mock_session
         mock_login.assert_called_once_with(
-            "000000000000",
             session_path=str(SESSION_FILE),
             oauth_path=str(OAUTH_FILE),
             lock_path=str(OAUTH_LOCK_FILE),

@@ -16,7 +16,7 @@ from deformentor_cli.session import (
     _build_pairing_url, _oauth_callback_code, follow_redirects, parse_form_action,
     parse_hidden_fields, handle_saml_chain, load_oauth_credential, login,
     oauth_state, pair_oauth, refresh_oauth, save_oauth_credential, save_session,
-    setup_login, load_session, validate_auth_url, verify_authenticated,
+    setup_login, load_session, validate_auth_url, verify_authenticated, _freja_web_login,
 )
 
 
@@ -277,13 +277,13 @@ class TestVerifyAuthenticated:
         }
 
 
-class TestLogin:
-    """Test the full login chain with mocked HTTP responses."""
+class TestFrejaWebLogin:
+    """Test the explicit Freja setup flow with mocked HTTP responses."""
 
     def _build_mock_session(self):
         """Build a mock session that simulates the full redirect chain.
 
-        The login flow makes these requests in order:
+        The Freja setup flow makes these requests in order:
         1. GET hub.infomentor.se -> 200, HTML with oauth_token
         2. POST infomentor.se/swedish/production/mentor/ -> 200, HTML with SSO URL
         3. GET sso.infomentor.se/login.ashx?idp=stockholm_par -> 302 chain -> 200, HTML with Freja link
@@ -363,15 +363,15 @@ class TestLogin:
         return session
 
     @patch("deformentor_cli.session.freja_login")
-    def test_login_returns_session(self, mock_freja):
+    def test_returns_session(self, mock_freja):
         session = self._build_mock_session()
-        result = login("0000000000", _session=session)
+        result = _freja_web_login("0000000000", session)
         assert result is session
 
     @patch("deformentor_cli.session.freja_login")
-    def test_login_calls_freja_with_correct_args(self, mock_freja):
+    def test_calls_freja_with_correct_args(self, mock_freja):
         session = self._build_mock_session()
-        login("0000000000", _session=session)
+        _freja_web_login("0000000000", session)
         mock_freja.assert_called_once_with(
             session,
             "https://login003.stockholm.se/NECSadcfreja/authenticate/NECSadcfreja?TYPE=1&TARGET=x",
@@ -381,29 +381,12 @@ class TestLogin:
         assert callable(mock_freja.call_args.kwargs["on_started"])
 
     @patch("deformentor_cli.session.freja_login")
-    def test_login_verifies_authentication(self, mock_freja):
+    def test_verifies_authentication(self, mock_freja):
         session = self._build_mock_session()
-        login("0000000000", _session=session)
+        _freja_web_login("0000000000", session)
         # Last POST should be the isauthenticated check
         last_post = session.post.call_args_list[-1]
         assert "isauthenticated" in last_post[0][0]
-
-    @patch("deformentor_cli.session.save_session")
-    @patch("deformentor_cli.session.load_session", return_value=True)
-    @patch("deformentor_cli.session.freja_login")
-    def test_expired_cached_session_reauthenticates(self, mock_freja, mock_load, mock_save, tmp_path):
-        session = self._build_mock_session()
-        response = requests.Response()
-        response.status_code = 401
-        session.post.side_effect = [
-            requests.HTTPError(response=response),
-            *session.post.side_effect,
-        ]
-
-        result = login("0000000000", _session=session, session_path=str(tmp_path / "session.json"))
-
-        assert result is session
-        mock_freja.assert_called_once()
 
     @patch("deformentor_cli.session.load_session", return_value=True)
     def test_cached_session_server_error_propagates(self, mock_load):
@@ -413,15 +396,15 @@ class TestLogin:
         session.post.side_effect = requests.HTTPError(response=response)
 
         with pytest.raises(requests.HTTPError):
-            login("0000000000", _session=session, session_path="session.json")
+            login(_session=session, session_path="session.json")
 
 
 class TestLoginPrompt:
     @patch("deformentor_cli.session.freja_login")
     def test_login_prints_human_approval_prompt(self, mock_freja, capsys):
         mock_freja.side_effect = lambda *args, **kwargs: kwargs["on_started"]()
-        session = TestLogin()._build_mock_session()
-        login("0000000000", _session=session)
+        session = TestFrejaWebLogin()._build_mock_session()
+        _freja_web_login("0000000000", session)
         captured = capsys.readouterr()
         assert "approve the login in freja" in captured.err.lower()
 
@@ -545,9 +528,12 @@ class TestOAuthCredentialState:
         assert oauth_state(path) == "missing"
         path.write_text("not json")
         assert oauth_state(path) == "invalid"
-        path.write_text('{"refresh_token":"refresh","legacy":"ignored"}')
+        path.write_text('{"refresh_token":"refresh"}')
         assert oauth_state(path) == "configured"
         assert load_oauth_credential(path) == {"refresh_token": "refresh"}
+
+        path.write_text('{"refresh_token":"refresh","legacy":"ignored"}')
+        assert oauth_state(path) == "invalid"
 
     def test_invalid_credential_requires_setup(self, tmp_path):
         path = tmp_path / "oauth.json"
@@ -659,26 +645,22 @@ class TestOAuthRefresh:
 
 
 class TestOAuthLoginPrecedence:
-    @patch("deformentor_cli.session._freja_web_login")
     @patch("deformentor_cli.session._try_saved_session", return_value=True)
-    def test_valid_cookie_avoids_oauth_and_freja(self, mock_cached, mock_freja):
+    def test_valid_cookie_avoids_oauth_refresh(self, mock_cached):
         session = MagicMock()
-        assert login("0000000000", _session=session, session_path="session.json", oauth_path="oauth.json") is session
-        mock_freja.assert_not_called()
+        assert login(_session=session, session_path="session.json", oauth_path="oauth.json") is session
 
     @patch("deformentor_cli.session.save_session")
     @patch("deformentor_cli.session.oauth_web_session")
     @patch("deformentor_cli.session.refresh_oauth", return_value="access")
     @patch("deformentor_cli.session.oauth_state", return_value="configured")
     @patch("deformentor_cli.session._try_saved_session", side_effect=[False, False])
-    @patch("deformentor_cli.session._freja_web_login")
     def test_expired_cookie_renews_with_oauth(
-        self, mock_freja, mock_cached, mock_state, mock_refresh, mock_bridge, mock_save, tmp_path
+        self, mock_cached, mock_state, mock_refresh, mock_bridge, mock_save, tmp_path
     ):
         renewed = MagicMock()
         mock_bridge.return_value = renewed
         result = login(
-            "0000000000",
             session_path=str(tmp_path / "session.json"),
             oauth_path=str(tmp_path / "oauth.json"),
             lock_path=str(tmp_path / "oauth.lock"),
@@ -686,7 +668,6 @@ class TestOAuthLoginPrecedence:
         assert result is renewed
         mock_refresh.assert_called_once()
         mock_save.assert_called_once_with(renewed, str(tmp_path / "session.json"))
-        mock_freja.assert_not_called()
 
     @patch("deformentor_cli.session.refresh_oauth")
     @patch("deformentor_cli.session.oauth_state", return_value="configured")
@@ -695,7 +676,6 @@ class TestOAuthLoginPrecedence:
         self, mock_cached, mock_state, mock_refresh, tmp_path
     ):
         result = login(
-            "0000000000",
             session_path=str(tmp_path / "session.json"),
             oauth_path=str(tmp_path / "oauth.json"),
             lock_path=str(tmp_path / "oauth.lock"),
@@ -706,34 +686,21 @@ class TestOAuthLoginPrecedence:
     @patch("deformentor_cli.session.refresh_oauth", side_effect=OAuthSetupRequired("rejected"))
     @patch("deformentor_cli.session.oauth_state", return_value="configured")
     @patch("deformentor_cli.session._try_saved_session", side_effect=[False, False])
-    @patch("deformentor_cli.session._freja_web_login")
-    def test_rejected_oauth_does_not_fall_back_to_freja(
-        self, mock_freja, mock_cached, mock_state, mock_refresh, tmp_path
+    def test_rejected_oauth_requires_setup(
+        self, mock_cached, mock_state, mock_refresh, tmp_path
     ):
         with pytest.raises(OAuthSetupRequired):
             login(
-                "0000000000",
                 session_path=str(tmp_path / "session.json"),
                 oauth_path=str(tmp_path / "oauth.json"),
                 lock_path=str(tmp_path / "oauth.lock"),
             )
-        mock_freja.assert_not_called()
-
-    @patch("deformentor_cli.session.save_session")
     @patch("deformentor_cli.session.oauth_state", return_value="missing")
     @patch("deformentor_cli.session._try_saved_session", return_value=False)
-    @patch("deformentor_cli.session._freja_web_login")
-    def test_missing_oauth_preserves_legacy_freja(self, mock_freja, mock_cached, mock_state, mock_save):
+    def test_missing_oauth_requires_setup(self, mock_cached, mock_state):
         session = MagicMock()
-        mock_freja.return_value = session
-        assert login(
-            "0000000000",
-            _session=session,
-            session_path="session.json",
-            oauth_path="oauth.json",
-        ) is session
-        mock_freja.assert_called_once()
-        mock_save.assert_called_once_with(session, "session.json")
+        with pytest.raises(OAuthSetupRequired, match="not configured"):
+            login(_session=session, session_path="session.json", oauth_path="oauth.json")
 
     @patch("deformentor_cli.session.verify_authenticated")
     @patch("deformentor_cli.session.pair_oauth", return_value={"refresh_token": "refresh"})

@@ -152,12 +152,14 @@ def oauth_state(path):
         data = json.loads(credential_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return "invalid"
-    token = data.get("refresh_token") if isinstance(data, dict) else None
+    if not isinstance(data, dict) or set(data) != {"refresh_token"}:
+        return "invalid"
+    token = data["refresh_token"]
     return "configured" if isinstance(token, str) and token.strip() else "invalid"
 
 
 def load_oauth_credential(path):
-    """Load a private OAuth refresh token, accepting harmless legacy fields."""
+    """Load the private OAuth refresh token."""
     state = oauth_state(path)
     if state == "missing":
         return None
@@ -464,8 +466,8 @@ def setup_login(personnummer, _session=None):
     return session, credential
 
 
-def login(personnummer, _session=None, session_path=None, oauth_path=None, lock_path=None):
-    """Return an authenticated session using cookies, OAuth, or legacy Freja."""
+def login(_session=None, session_path=None, oauth_path=None, lock_path=None):
+    """Return an authenticated session using a saved web session or OAuth."""
     session = _session or new_session()
     if _try_saved_session(session, session_path):
         return session
@@ -488,11 +490,7 @@ def login(personnummer, _session=None, session_path=None, oauth_path=None, lock_
                 "Another Deformentor process is renewing authentication. Try again."
             ) from error
 
-    session = _session or new_session()
-    session = _freja_web_login(personnummer, session)
-    if session_path:
-        save_session(session, session_path)
-    return session
+    raise OAuthSetupRequired("OAuth authentication is not configured.")
 
 
 def new_session():

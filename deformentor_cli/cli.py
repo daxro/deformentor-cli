@@ -756,7 +756,6 @@ def _get_session(quiet=False):
         emit_error("not_configured", "PERSONNUMMER not set. Run: deformentor setup", exit_code=EXIT_AUTH)
     _validate_personnummer(personnummer, stored=True)
     return login(
-        personnummer,
         session_path=str(SESSION_FILE),
         oauth_path=str(OAUTH_FILE),
         lock_path=str(OAUTH_LOCK_FILE),
