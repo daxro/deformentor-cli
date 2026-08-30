@@ -7,7 +7,7 @@ import requests
 from deformentor_cli.api import get_children, switch_child, get_notifications, get_messages, get_attendance_detail, get_calendar_event, get_news_detail, get_meeting_availabilities, fetch_all_notifications, fetch_all_messages, get_attachment, validate_attachment_url
 from deformentor_cli.api import get_time_registrations, get_time_registration_for_date, get_time_registration_comments, save_time_registration_comment, normalize_time_registration_comment
 from deformentor_cli.api import _normalize_type_name, _extract_id_from_url, _normalize_notification, _normalize_message, _normalize_message_summary
-from deformentor_cli.errors import UpstreamStateError
+from deformentor_cli.errors import CalendarDetailUnavailable, UpstreamStateError
 
 
 MOCK_HOME_DATA = {
@@ -1164,6 +1164,15 @@ class TestGetCalendarEvent:
         resp.raise_for_status.side_effect = requests.HTTPError("404 Not Found", response=resp)
         session.post.return_value = resp
         with pytest.raises(requests.HTTPError, match="404"):
+            get_calendar_event(session, "99999")
+
+    def test_maps_server_error_to_calendar_detail_unavailable(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.status_code = 500
+        resp.raise_for_status.side_effect = requests.HTTPError("500 Server Error", response=resp)
+        session.post.return_value = resp
+        with pytest.raises(CalendarDetailUnavailable, match="attachments cannot be determined"):
             get_calendar_event(session, "99999")
 
 

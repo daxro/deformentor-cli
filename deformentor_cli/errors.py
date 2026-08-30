@@ -30,6 +30,10 @@ class UpstreamStateError(Exception):
     """An upstream operation completed without the expected state change."""
 
 
+class CalendarDetailUnavailable(UpstreamStateError):
+    """InfoMentor does not currently serve calendar-notification details."""
+
+
 def emit_error(code, message, exit_code=EXIT_ERROR):
     """Write structured JSON error to stderr and exit."""
     error = {"error": code, "message": message}

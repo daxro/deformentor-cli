@@ -19,7 +19,7 @@ except ImportError:
     _HAS_ARGCOMPLETE = False
 
 from deformentor_cli.errors import (
-    AuthenticationError, FrejaError, FrejaHttpError, OAuthSetupRequired,
+    AuthenticationError, CalendarDetailUnavailable, FrejaError, FrejaHttpError, OAuthSetupRequired,
     UpstreamStateError, emit_error,
     EXIT_AUTH, EXIT_ERROR, EXIT_NETWORK, EXIT_NOT_FOUND, EXIT_USAGE,
 )
@@ -674,6 +674,8 @@ safety:
         emit_error("auth_failed", f"Freja authentication failed: {e}", exit_code=EXIT_AUTH)
     except FrejaError as e:
         emit_error("auth_failed", f"Freja authentication failed: {e}", exit_code=EXIT_AUTH)
+    except CalendarDetailUnavailable as e:
+        emit_error("calendar_detail_unavailable", str(e), exit_code=EXIT_NETWORK)
     except UpstreamStateError as e:
         emit_error("upstream_state_error", str(e), exit_code=EXIT_NETWORK)
     except requests.HTTPError as e:

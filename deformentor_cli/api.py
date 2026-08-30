@@ -5,7 +5,9 @@ import re
 import sys
 from urllib.parse import parse_qs, unquote, urlparse, urlsplit
 
-from deformentor_cli.errors import UpstreamStateError
+import requests
+
+from deformentor_cli.errors import CalendarDetailUnavailable, UpstreamStateError
 
 BASE_URL = "https://hub.infomentor.se"
 HTTP_TIMEOUT = 30
@@ -144,7 +146,17 @@ def get_calendar_event(session, event_id):
         headers=AJAX_HEADERS,
         timeout=HTTP_TIMEOUT,
     )
-    resp.raise_for_status()
+    try:
+        resp.raise_for_status()
+    except requests.HTTPError as error:
+        response = error.response or resp
+        if getattr(response, "status_code", None) == 500:
+            raise CalendarDetailUnavailable(
+                "InfoMentor cannot currently retrieve calendar notification details. "
+                "Try again later or view the event in the InfoMentor web app; "
+                "attachments cannot be determined from this notification."
+            ) from error
+        raise
     return resp.json()
 
 

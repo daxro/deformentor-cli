@@ -79,6 +79,11 @@ deformentor news NEWS_ID --child STUDENT_NAME
 deformentor meeting --child STUDENT_NAME
 ```
 
+Calendar notification summaries are available through `notifications`. InfoMentor's
+current detail endpoint may reject calendar event IDs with a server error; in that
+case `calendar` returns `calendar_detail_unavailable` and cannot determine whether
+the event has attachments. Try again later or use the InfoMentor web app.
+
 Run any command with `--help` to see its options and examples.
 
 `--child` is a case-insensitive substring filter for list commands. For commands that switch child context, the match must be exact or unique. Ambiguous matches fail instead of selecting a child silently.

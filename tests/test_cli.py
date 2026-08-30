@@ -1789,6 +1789,24 @@ class TestMainExceptionHandling:
         assert exc_info.value.code == 5
         assert json.loads(capsys.readouterr().err)["error"] == "upstream_state_error"
 
+    def test_calendar_detail_unavailable_is_actionable(self, monkeypatch, capsys):
+        import deformentor_cli.cli as cli
+        from deformentor_cli.errors import CalendarDetailUnavailable
+        monkeypatch.setattr("sys.argv", ["deformentor", "calendar", "12345"])
+        monkeypatch.setattr(
+            cli,
+            "_calendar",
+            MagicMock(side_effect=CalendarDetailUnavailable("try the web app; attachments cannot be determined")),
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            cli.main()
+
+        assert exc_info.value.code == 5
+        error = json.loads(capsys.readouterr().err)
+        assert error["error"] == "calendar_detail_unavailable"
+        assert "attachments cannot be determined" in error["message"]
+
 
 class TestNoInputFlag:
     @patch("deformentor_cli.cli._persist_setup_state")
