@@ -1,15 +1,6 @@
 import json
 import sys
 
-from stockholm_freja import (
-    FrejaError,
-    FrejaHttpError,
-    FrejaInputError,
-    FrejaRedirectError,
-    FrejaRejectedError,
-    FrejaTimeoutError,
-)
-
 
 EXIT_ERROR = 1
 EXIT_USAGE = 2

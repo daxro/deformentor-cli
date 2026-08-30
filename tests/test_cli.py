@@ -28,7 +28,6 @@ class TestGetSession:
             session_path=str(SESSION_FILE),
             oauth_path=str(OAUTH_FILE),
             lock_path=str(OAUTH_LOCK_FILE),
-            quiet=False,
         )
 
     @patch("deformentor_cli.cli.dotenv_values")
@@ -52,24 +51,6 @@ class TestGetSession:
 
         assert exc_info.value.code == 2
         mock_login.assert_not_called()
-
-
-class TestGetSessionQuiet:
-    @patch("deformentor_cli.cli.login")
-    @patch("deformentor_cli.cli.dotenv_values")
-    def test_passes_quiet_to_login(self, mock_dotenv, mock_login):
-        from deformentor_cli.cli import _get_session, OAUTH_FILE, OAUTH_LOCK_FILE, SESSION_FILE
-        mock_dotenv.return_value = {"PERSONNUMMER": "000000000000"}
-        mock_session = MagicMock()
-        mock_login.return_value = mock_session
-        _get_session(quiet=True)
-        mock_login.assert_called_once_with(
-            "000000000000",
-            session_path=str(SESSION_FILE),
-            oauth_path=str(OAUTH_FILE),
-            lock_path=str(OAUTH_LOCK_FILE),
-            quiet=True,
-        )
 
 
 class TestValidateDateFlag:
@@ -1188,7 +1169,7 @@ class TestNonInteractiveSetup:
         monkeypatch.setattr("sys.stdin", io.StringIO(""))
         mock_setup_login.return_value = (MagicMock(), {"refresh_token": "refresh"})
         _setup()
-        mock_setup_login.assert_called_once_with("000000000000", quiet=False)
+        mock_setup_login.assert_called_once_with("000000000000")
         mock_persist.assert_called_once()
 
     def test_fails_without_env_var_when_no_tty(self, monkeypatch, capsys, tmp_path):
@@ -1219,7 +1200,7 @@ class TestNonInteractiveSetup:
 
         _setup(personnummer="222222222222")
 
-        mock_setup_login.assert_called_once_with("222222222222", quiet=False)
+        mock_setup_login.assert_called_once_with("222222222222")
         assert mock_persist.call_args.args[0] == "222222222222"
 
     @patch("deformentor_cli.cli._print_status")
@@ -1237,7 +1218,7 @@ class TestNonInteractiveSetup:
 
         _setup(no_input=True, personnummer="222222222222")
 
-        mock_setup_login.assert_called_once_with("222222222222", quiet=False)
+        mock_setup_login.assert_called_once_with("222222222222")
         mock_persist.assert_called_once()
 
     @patch("deformentor_cli.cli._print_status")
@@ -1258,7 +1239,7 @@ class TestNonInteractiveSetup:
 
         mock_logo.assert_called_once()
         mock_input.assert_called_once_with("Personnummer (12 digits): ")
-        mock_setup_login.assert_called_once_with("222222222222", quiet=False)
+        mock_setup_login.assert_called_once_with("222222222222")
 
     @patch("deformentor_cli.cli._print_status")
     @patch("deformentor_cli.cli._persist_setup_state")
@@ -1278,7 +1259,7 @@ class TestNonInteractiveSetup:
             _setup()
 
         mock_input.assert_not_called()
-        mock_setup_login.assert_called_once_with("111111111111", quiet=False)
+        mock_setup_login.assert_called_once_with("111111111111")
         assert mock_persist.call_args.args[0] == "111111111111"
 
     @patch("deformentor_cli.cli._print_status")
@@ -1298,7 +1279,7 @@ class TestNonInteractiveSetup:
 
         _setup(no_input=True)
 
-        mock_setup_login.assert_called_once_with("111111111111", quiet=False)
+        mock_setup_login.assert_called_once_with("111111111111")
 
     @patch("deformentor_cli.cli._print_status")
     @patch("deformentor_cli.cli.setup_login")
@@ -1780,7 +1761,7 @@ class TestMainExceptionHandling:
 
     def test_maps_freja_server_error_to_network_exit(self, monkeypatch, capsys):
         import deformentor_cli.cli as cli
-        from deformentor_cli.errors import FrejaHttpError
+        from stockholm_freja import FrejaHttpError
 
         monkeypatch.setattr("sys.argv", ["deformentor", "status"])
         monkeypatch.setattr(cli, "_status", MagicMock(side_effect=FrejaHttpError("secret", status_code=500)))
@@ -1792,6 +1773,21 @@ class TestMainExceptionHandling:
         output = capsys.readouterr().err
         assert json.loads(output)["error"] == "server_error"
         assert "secret" not in output
+
+    def test_sanitizes_freja_exception_text(self, monkeypatch, capsys):
+        import deformentor_cli.cli as cli
+        from stockholm_freja import FrejaError
+
+        monkeypatch.setattr("sys.argv", ["deformentor", "status"])
+        monkeypatch.setattr(cli, "_status", MagicMock(side_effect=FrejaError("sensitive upstream detail")))
+
+        with pytest.raises(SystemExit) as exc_info:
+            cli.main()
+
+        assert exc_info.value.code == 3
+        output = capsys.readouterr().err
+        assert json.loads(output)["error"] == "auth_failed"
+        assert "sensitive upstream detail" not in output
 
     def test_keyboard_interrupt_is_structured(self, monkeypatch, capsys):
         import deformentor_cli.cli as cli
@@ -1878,7 +1874,7 @@ class TestNoInputFlag:
              patch("deformentor_cli.cli._print_status"):
             mock_status.return_value = {"configured": True, "session": "valid", "children": []}
             _setup(quiet=True, no_input=True)
-        mock_setup_login.assert_called_once_with("000000000000", quiet=True)
+        mock_setup_login.assert_called_once_with("000000000000")
 
 
 class TestSetupFlag:

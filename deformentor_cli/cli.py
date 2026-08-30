@@ -19,8 +19,7 @@ except ImportError:
     _HAS_ARGCOMPLETE = False
 
 from deformentor_cli.errors import (
-    AuthenticationError, FrejaError, FrejaHttpError, OAuthSetupRequired,
-    UpstreamStateError, emit_error,
+    AuthenticationError, OAuthSetupRequired, UpstreamStateError, emit_error,
     EXIT_AUTH, EXIT_ERROR, EXIT_NETWORK, EXIT_NOT_FOUND, EXIT_USAGE,
 )
 from deformentor_cli.api import (
@@ -37,7 +36,7 @@ from deformentor_cli.session import (
     HTTP_TIMEOUT, login, load_session, new_session, oauth_state, save_oauth_credential,
     save_session, setup_login, verify_authenticated,
 )
-from stockholm_freja import FrejaInputError, validate_personnummer
+from stockholm_freja import FrejaError, FrejaHttpError, FrejaInputError, validate_personnummer
 
 _LOGO_LINES = [
     r"    _      __                       _               ___ _    ___ ",
@@ -91,7 +90,6 @@ KNOWN_NOTIFICATION_TYPES = {"attendance", "calendar", "news", "meeting", "messag
 
 _DEFAULT_SINCE_DAYS = 30
 _CALENDAR_WINDOW_DAYS = 30
-# _DEFAULT_UNTIL_DAYS: no default upper bound yet. Reserved for future lookup.
 
 
 def _validate_personnummer(personnummer, stored=False):
@@ -692,13 +690,13 @@ safety:
         )
     except AuthenticationError:
         emit_error("auth_failed", "InfoMentor authentication failed.", exit_code=EXIT_AUTH)
-    except FrejaHttpError as e:
-        status_code = getattr(e, "status_code", None)
+    except FrejaHttpError as error:
+        status_code = getattr(error, "status_code", None)
         if status_code is not None and status_code >= 500:
             emit_error("server_error", f"Freja returned HTTP status {status_code}.", exit_code=EXIT_NETWORK)
-        emit_error("auth_failed", f"Freja authentication failed: {e}", exit_code=EXIT_AUTH)
-    except FrejaError as e:
-        emit_error("auth_failed", f"Freja authentication failed: {e}", exit_code=EXIT_AUTH)
+        emit_error("auth_failed", "Freja authentication failed.", exit_code=EXIT_AUTH)
+    except FrejaError:
+        emit_error("auth_failed", "Freja authentication failed.", exit_code=EXIT_AUTH)
     except UpstreamStateError as e:
         emit_error("upstream_state_error", str(e), exit_code=EXIT_NETWORK)
     except requests.HTTPError as e:
@@ -744,7 +742,7 @@ def _setup(quiet=False, no_input=False, personnummer=None):
         personnummer = input("Personnummer (12 digits): ").strip()
         _validate_personnummer(personnummer)
 
-    session, oauth_credential = setup_login(personnummer, quiet=quiet)
+    session, oauth_credential = setup_login(personnummer)
     _persist_setup_state(personnummer, session, oauth_credential, quiet)
     _progress("Authenticated.", quiet)
     _print_status(_get_status())
@@ -762,7 +760,6 @@ def _get_session(quiet=False):
         session_path=str(SESSION_FILE),
         oauth_path=str(OAUTH_FILE),
         lock_path=str(OAUTH_LOCK_FILE),
-        quiet=quiet,
     )
 
 

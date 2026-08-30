@@ -15,8 +15,8 @@ from urllib.parse import parse_qs, parse_qsl, urlencode, urljoin, urlsplit, urlu
 import portalocker
 import requests
 from deformentor_cli.errors import AuthenticationError, OAuthSetupRequired, UpstreamStateError
-from deformentor_cli.freja import freja_login
 from deformentor_cli.paths import write_private_text
+from stockholm_freja import freja_login
 
 HTTP_TIMEOUT = 30
 REDIRECT_CODES = (301, 302, 303, 307, 308)
@@ -410,7 +410,7 @@ def _try_saved_session(session, session_path):
         raise
 
 
-def _freja_web_login(personnummer, session, quiet=False):
+def _freja_web_login(personnummer, session):
     """Create a verified web session through Stockholm and Freja eID+."""
     response = session.get(
         validate_auth_url("https://hub.infomentor.se/"),
@@ -456,15 +456,15 @@ def _freja_web_login(personnummer, session, quiet=False):
     return session
 
 
-def setup_login(personnummer, _session=None, quiet=False):
+def setup_login(personnummer, _session=None):
     """Perform explicit Freja setup and return a web session plus OAuth credential."""
-    session = _freja_web_login(personnummer, _session or new_session(), quiet=quiet)
+    session = _freja_web_login(personnummer, _session or new_session())
     credential = pair_oauth(session)
     verify_authenticated(session)
     return session, credential
 
 
-def login(personnummer, _session=None, session_path=None, oauth_path=None, lock_path=None, quiet=False):
+def login(personnummer, _session=None, session_path=None, oauth_path=None, lock_path=None):
     """Return an authenticated session using cookies, OAuth, or legacy Freja."""
     session = _session or new_session()
     if _try_saved_session(session, session_path):
@@ -489,7 +489,7 @@ def login(personnummer, _session=None, session_path=None, oauth_path=None, lock_
             ) from error
 
     session = _session or new_session()
-    session = _freja_web_login(personnummer, session, quiet=quiet)
+    session = _freja_web_login(personnummer, session)
     if session_path:
         save_session(session, session_path)
     return session

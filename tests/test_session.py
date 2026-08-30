@@ -416,23 +416,14 @@ class TestLogin:
             login("0000000000", _session=session, session_path="session.json")
 
 
-class TestLoginQuiet:
+class TestLoginPrompt:
     @patch("deformentor_cli.session.freja_login")
-    def test_login_prints_progress_by_default(self, mock_freja, capsys):
+    def test_login_prints_human_approval_prompt(self, mock_freja, capsys):
         mock_freja.side_effect = lambda *args, **kwargs: kwargs["on_started"]()
         session = TestLogin()._build_mock_session()
         login("0000000000", _session=session)
         captured = capsys.readouterr()
         assert "approve the login in freja" in captured.err.lower()
-
-    @patch("deformentor_cli.session.freja_login")
-    def test_login_keeps_human_approval_prompt_when_quiet(self, mock_freja, capsys):
-        mock_freja.side_effect = lambda *args, **kwargs: kwargs["on_started"]()
-        session = TestLogin()._build_mock_session()
-        login("0000000000", _session=session, quiet=True)
-        captured = capsys.readouterr()
-        assert "approve the login in freja" in captured.err.lower()
-
 
 class TestSessionPersistence:
     def test_save_and_load_roundtrip(self):
