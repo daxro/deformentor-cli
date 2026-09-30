@@ -135,6 +135,72 @@ def get_attendance_detail(session, request_id):
     return resp.json()
 
 
+def get_attendance_app_data(session):
+    """Fetch the selected child's absence and leave capabilities."""
+    resp = session.post(
+        f"{BASE_URL}/attendance/attendance/appData",
+        json={}, headers=AJAX_HEADERS, timeout=HTTP_TIMEOUT,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if not isinstance(data, dict) or not isinstance(data.get("urls"), dict):
+        raise UpstreamStateError("InfoMentor returned invalid attendance data.")
+    return data
+
+
+def report_full_day_absence(session, day, can_add_sickness):
+    """Report a full school day absent for today or tomorrow."""
+    resp = session.post(
+        f"{BASE_URL}/attendance/attendance/registerAttendance",
+        json={
+            "day": day,
+            "present": False,
+            "canAddSicknessToTimeRegistration": can_add_sickness,
+            "RegType": "day",
+        },
+        headers=AJAX_HEADERS, timeout=HTTP_TIMEOUT,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if not isinstance(data, dict) or data.get("success") is False:
+        raise UpstreamStateError("InfoMentor did not accept the absence report.")
+    return data
+
+
+def get_leave_requests(session):
+    """List leave applications for the selected child."""
+    resp = session.post(
+        f"{BASE_URL}/attendance/attendance/GetLeaveRequestList",
+        json={}, headers=AJAX_HEADERS, timeout=HTTP_TIMEOUT,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if not isinstance(data, list):
+        raise UpstreamStateError("InfoMentor returned invalid leave requests.")
+    return data
+
+
+def create_leave_request(session, from_date, to_date, reason, from_time=None, to_time=None):
+    """Submit one leave application and return its new ID."""
+    resp = session.post(
+        f"{BASE_URL}/attendance/attendance/CreateLeaveRequest",
+        json={
+            "id": None,
+            "fromDate": from_date,
+            "fromTime": from_time,
+            "toDate": to_date,
+            "toTime": to_time,
+            "comment": reason,
+        },
+        headers=AJAX_HEADERS, timeout=HTTP_TIMEOUT,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if not isinstance(data, dict) or data.get("success") is not True or not data.get("id"):
+        raise UpstreamStateError("InfoMentor did not accept the leave request.")
+    return data["id"]
+
+
 def _calendar_json_list(response, endpoint_name):
     """Return a calendar endpoint's JSON list or raise a sanitized error."""
     try:
@@ -427,6 +493,28 @@ def get_time_registration_for_date(session, date_iso):
         if row_date == target_date:
             return row
     raise RuntimeError(f"No time registration found for {target_date}")
+
+
+def save_time_registration_day(session, row, *, free, start=None, end=None):
+    """Save one fritids day using the same day payload as InfoMentor Hub."""
+    day = dict(row)
+    date_iso = str(row["date"])[:10]
+    day.update({
+        "onLeave": free,
+        "startDateTime": None if free else f"{date_iso}T{start}:00",
+        "endDateTime": None if free else f"{date_iso}T{end}:00",
+        "registrationType": "OnLeave" if free else "TimeReg",
+    })
+    resp = session.post(
+        f"{BASE_URL}/TimeRegistration/TimeRegistration/SaveTimeRegistrations/",
+        json={"days": [day], "series": None},
+        headers=AJAX_HEADERS, timeout=HTTP_TIMEOUT,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if not isinstance(data, dict) or data.get("success") is not True:
+        raise UpstreamStateError("InfoMentor did not accept the fritids schedule.")
+    return data
 
 
 def get_time_registration_comments(session, date_iso):

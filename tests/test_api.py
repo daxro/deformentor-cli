@@ -7,6 +7,10 @@ import requests
 from deformentor_cli.api import get_children, switch_child, get_notifications, get_messages, get_attendance_detail, get_calendar_entries, get_calendar_attachments, fetch_all_calendar_events, get_news_detail, get_meeting_availabilities, fetch_all_notifications, fetch_all_messages, get_attachment, validate_attachment_url
 from deformentor_cli.api import get_time_registrations, get_time_registration_for_date, get_time_registration_comments, save_time_registration_comment, normalize_time_registration_comment
 from deformentor_cli.api import _normalize_type_name, _extract_id_from_url, _normalize_notification, _normalize_message, _normalize_message_summary
+from deformentor_cli.api import (
+    create_leave_request, get_attendance_app_data, get_leave_requests,
+    report_full_day_absence, save_time_registration_day,
+)
 from deformentor_cli.errors import UpstreamStateError
 
 
@@ -1120,6 +1124,61 @@ class TestGetAttendanceDetail:
         session.post.return_value = resp
         with pytest.raises(requests.HTTPError, match="404"):
             get_attendance_detail(session, "99999")
+
+
+class TestNewWriteApis:
+    def test_absence_uses_day_payload(self):
+        session = MagicMock()
+        session.post.return_value.json.return_value = {"success": True}
+        report_full_day_absence(session, "today", False)
+        url, = session.post.call_args.args
+        assert url.endswith("/attendance/attendance/registerAttendance")
+        assert session.post.call_args.kwargs["json"] == {
+            "day": "today", "present": False,
+            "canAddSicknessToTimeRegistration": False, "RegType": "day",
+        }
+
+    def test_leave_uses_hub_payload(self):
+        session = MagicMock()
+        session.post.return_value.json.return_value = {"success": True, "id": 123}
+        assert create_leave_request(session, "2026-10-27", "2026-10-27", "Family event") == 123
+        assert session.post.call_args.kwargs["json"] == {
+            "id": None, "fromDate": "2026-10-27", "fromTime": None,
+            "toDate": "2026-10-27", "toTime": None, "comment": "Family event",
+        }
+
+    def test_fritids_free_day_uses_one_day_payload(self):
+        session = MagicMock()
+        session.post.return_value.json.return_value = {"success": True, "notifications": []}
+        row = {"date": "2026-10-27T00:00:00", "timeRegistrationId": 123,
+               "onLeave": False, "startDateTime": None, "endDateTime": None}
+        save_time_registration_day(session, row, free=True)
+        url, = session.post.call_args.args
+        assert url.endswith("/TimeRegistration/TimeRegistration/SaveTimeRegistrations/")
+        payload = session.post.call_args.kwargs["json"]
+        assert payload["series"] is None
+        assert payload["days"] == [{**row, "onLeave": True, "startDateTime": None,
+                                   "endDateTime": None, "registrationType": "OnLeave"}]
+
+    def test_fritids_day_preserves_existing_comment(self):
+        session = MagicMock()
+        session.post.return_value.json.return_value = {"success": True}
+        row = {"date": "2026-10-27T00:00:00", "onLeave": False,
+               "commentText": "Pickup by aunt", "commentId": 42,
+               "isCommentUpdated": False}
+        save_time_registration_day(session, row, free=True)
+        saved = session.post.call_args.kwargs["json"]["days"][0]
+        assert saved["commentText"] == row["commentText"]
+        assert saved["commentId"] == row["commentId"]
+
+    def test_read_endpoints_validate_shape(self):
+        session = MagicMock()
+        session.post.return_value.json.return_value = []
+        with pytest.raises(UpstreamStateError):
+            get_attendance_app_data(session)
+        session.post.return_value.json.return_value = {}
+        with pytest.raises(UpstreamStateError):
+            get_leave_requests(session)
 
 
 class TestCalendarApi:

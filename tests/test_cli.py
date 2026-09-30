@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 from datetime import date, timedelta
+from types import SimpleNamespace
 
 import pytest
 import requests
@@ -672,6 +673,116 @@ class TestAttendanceCommand:
         args.child = "Student A"
         _attendance(args)
         mock_switch.assert_called_once_with(mock_login.return_value, "Student A")
+
+
+class TestSchoolAndFritidsWrites:
+    def _mock_child(self, monkeypatch):
+        import deformentor_cli.cli as cli
+        monkeypatch.setattr(cli, "_get_session", lambda quiet=False: object())
+        monkeypatch.setattr(cli, "_resolve_and_switch_child",
+                            lambda session, name: {"id": "123", "name": "Example, Student"})
+
+    def test_absence_rejects_future_date_before_authentication(self, monkeypatch):
+        import deformentor_cli.cli as cli
+        called = []
+        monkeypatch.setattr(cli, "_get_session", lambda quiet=False: called.append(True))
+        args = SimpleNamespace(child="Student", date=(date.today() + timedelta(days=2)).isoformat(),
+                               apply=False, confirm=False, quiet=True, fields=None)
+        with pytest.raises(SystemExit) as error:
+            cli._absence(args)
+        assert error.value.code == 2
+        assert called == []
+
+    def test_absence_preview_and_verified_apply(self, monkeypatch, capsys):
+        import deformentor_cli.cli as cli
+        self._mock_child(monkeypatch)
+        target = date.today().isoformat()
+        data = {"urls": {}, "canRegisterDayAbsence": True, "absenceTodayDate": target,
+                "absentToday": False, "absenceTodayLocked": False, "canAddSicknessToday": True}
+        saved = {**data, "absentToday": True}
+        reads = iter([data, data, saved])
+        monkeypatch.setattr(cli, "get_attendance_app_data", lambda session: next(reads))
+        writes = []
+        monkeypatch.setattr(cli, "report_full_day_absence", lambda *values: writes.append(values))
+        args = SimpleNamespace(child="Student", date=target, apply=False, confirm=False,
+                               quiet=True, fields=None)
+        cli._absence(args)
+        assert json.loads(capsys.readouterr().out)["would_write_if_applied"] is True
+        assert writes == []
+        args.apply = args.confirm = True
+        cli._absence(args)
+        assert json.loads(capsys.readouterr().out)["verified"] is True
+        assert writes[0][-1] is False
+
+    def test_leave_rejects_bad_range_before_authentication(self, monkeypatch):
+        import deformentor_cli.cli as cli
+        called = []
+        monkeypatch.setattr(cli, "_get_session", lambda quiet=False: called.append(True))
+        start = date.today() + timedelta(days=5)
+        args = SimpleNamespace(child="Student", from_date=start.isoformat(),
+                               until=(start - timedelta(days=1)).isoformat(), reason="Reason",
+                               start=None, end=None, apply=False, confirm=False, quiet=True, fields=None)
+        with pytest.raises(SystemExit) as error:
+            cli._leave(args)
+        assert error.value.code == 2
+        assert called == []
+
+    def test_leave_preview_then_verified_apply(self, monkeypatch, capsys):
+        import deformentor_cli.cli as cli
+        self._mock_child(monkeypatch)
+        target = (date.today() + timedelta(days=5)).isoformat()
+        monkeypatch.setattr(cli, "get_attendance_app_data",
+                            lambda session: {"urls": {}, "canRequestLeave": True})
+        reads = iter([[], [], [{"id": 45, "fromDate": target, "toDate": target,
+                                 "requesterComment": "Reason", "status": "Pending"}]])
+        monkeypatch.setattr(cli, "get_leave_requests", lambda session: next(reads))
+        writes = []
+        monkeypatch.setattr(cli, "create_leave_request", lambda *values: writes.append(values) or 45)
+        args = SimpleNamespace(child="Student", from_date=target, until=target, reason="Reason",
+                               start=None, end=None, apply=False, confirm=False, quiet=True, fields=None)
+        cli._leave(args)
+        assert json.loads(capsys.readouterr().out)["write_performed"] is False
+        assert writes == []
+        args.apply = args.confirm = True
+        cli._leave(args)
+        output = json.loads(capsys.readouterr().out)
+        assert output["id"] == 45 and output["verified"] is True
+
+    def test_leave_blocks_overlap(self, monkeypatch, capsys):
+        import deformentor_cli.cli as cli
+        self._mock_child(monkeypatch)
+        target = (date.today() + timedelta(days=5)).isoformat()
+        monkeypatch.setattr(cli, "get_attendance_app_data",
+                            lambda session: {"urls": {}, "canRequestLeave": True})
+        monkeypatch.setattr(cli, "get_leave_requests", lambda session: [
+            {"id": 45, "fromDate": target, "toDate": target, "status": "Pending"}])
+        args = SimpleNamespace(child="Student", from_date=target, until=target, reason="Reason",
+                               start=None, end=None, apply=True, confirm=True, quiet=True, fields=None)
+        with pytest.raises(SystemExit) as error:
+            cli._leave(args)
+        assert error.value.code == 2
+        assert "overlapping_leave" in capsys.readouterr().err
+
+    def test_fritids_free_day_preview_and_verified_apply(self, monkeypatch, capsys):
+        import deformentor_cli.cli as cli
+        self._mock_child(monkeypatch)
+        target = (date.today() + timedelta(days=5)).isoformat()
+        row = {"date": target + "T00:00:00", "onLeave": False,
+               "startDateTime": None, "endDateTime": None, "canEdit": True, "isLocked": False}
+        saved = {**row, "onLeave": True}
+        reads = iter([row, row, saved])
+        monkeypatch.setattr(cli, "get_time_registration_for_date", lambda session, day: next(reads))
+        writes = []
+        monkeypatch.setattr(cli, "save_time_registration_day", lambda *values, **kwargs: writes.append(kwargs))
+        args = SimpleNamespace(child="Student", date=target, free=True, start=None, end=None,
+                               overwrite_existing=False, apply=False, confirm=False, quiet=True, fields=None)
+        cli._fritids(args)
+        assert json.loads(capsys.readouterr().out)["would_write_if_applied"] is True
+        assert writes == []
+        args.apply = args.confirm = True
+        cli._fritids(args)
+        assert json.loads(capsys.readouterr().out)["verified"] is True
+        assert writes == [{"free": True, "start": None, "end": None}]
 
 
 class TestValidatePersonnummer:

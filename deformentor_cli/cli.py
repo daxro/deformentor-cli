@@ -23,10 +23,12 @@ from deformentor_cli.errors import (
     EXIT_AUTH, EXIT_ERROR, EXIT_NETWORK, EXIT_NOT_FOUND, EXIT_USAGE,
 )
 from deformentor_cli.api import (
-    fetch_all_calendar_events, fetch_all_notifications, fetch_all_messages, get_attachment,
-    get_attendance_detail, get_children, get_meeting_availabilities, get_news_detail,
+    create_leave_request, fetch_all_calendar_events, fetch_all_notifications, fetch_all_messages,
+    get_attachment, get_attendance_app_data, get_attendance_detail, get_children,
+    get_leave_requests, get_meeting_availabilities, get_news_detail,
     get_time_registration_comments, get_time_registration_for_date,
-    normalize_time_registration_comment, save_time_registration_comment, switch_child,
+    normalize_time_registration_comment, report_full_day_absence,
+    save_time_registration_comment, save_time_registration_day, switch_child,
     validate_attachment_url,
 )
 from deformentor_cli.paths import (
@@ -265,6 +267,31 @@ def _validate_exact_pickup_date(value):
         emit_error("invalid_input", f"Invalid pickup date: {value}", exit_code=EXIT_USAGE)
 
 
+def _validate_exact_date(value, flag):
+    if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        emit_error("invalid_input", f"{flag} must be YYYY-MM-DD.", exit_code=EXIT_USAGE)
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        emit_error("invalid_input", f"{flag} must be a real calendar date.", exit_code=EXIT_USAGE)
+
+
+def _validate_time(value, flag):
+    if not isinstance(value, str) or not re.fullmatch(r"\d{2}:\d{2}", value):
+        emit_error("invalid_input", f"{flag} must be HH:MM.", exit_code=EXIT_USAGE)
+    hour, minute = map(int, value.split(":"))
+    if hour > 23 or minute > 59 or minute % 5:
+        emit_error("invalid_input", f"{flag} must be a valid time on a five-minute boundary.", exit_code=EXIT_USAGE)
+    return value
+
+
+def _require_write_flags(args):
+    if args.apply and not args.confirm:
+        emit_error("invalid_input", "--apply requires --confirm.", exit_code=EXIT_USAGE)
+    if args.confirm and not args.apply:
+        emit_error("invalid_input", "--confirm requires --apply.", exit_code=EXIT_USAGE)
+
+
 def _validate_comment_text(comment_text):
     """Validate exact comment text without silently trimming it."""
     comment_text = "" if comment_text is None else comment_text
@@ -341,6 +368,7 @@ def _resolve_and_switch_child(session, firstname):
                 exit_code=EXIT_USAGE,
             )
     switch_child(session, matches[0]["id"])
+    return matches[0]
 
 
 def _write_config(content, quiet=False):
@@ -601,6 +629,34 @@ def _run_cli():
     att_parser = subparsers.add_parser("attendance", parents=[_global_flags], help="Fetch an attendance / leave request by ID")
     att_parser.add_argument("id", help="Attendance/leave request ID (from notifications output)")
     att_parser.add_argument("--child", help="Switch to this child's context before fetching")
+    absence_parser = subparsers.add_parser("absence", parents=[_global_flags],
+        help="Preview or report a full school day absent (today or tomorrow)")
+    absence_parser.add_argument("--child", required=True, help="Exact or unique child name")
+    absence_parser.add_argument("--date", required=True, help="Local date, YYYY-MM-DD; today or tomorrow only")
+    absence_parser.add_argument("--apply", action="store_true", help="Submit the absence report")
+    absence_parser.add_argument("--confirm", action="store_true", help="Required with --apply")
+    leave_parser = subparsers.add_parser("leave", parents=[_global_flags],
+        help="Preview or create a future school leave application")
+    leave_parser.add_argument("--child", required=True, help="Exact or unique child name")
+    leave_parser.add_argument("--from", dest="from_date", required=True, help="First date, YYYY-MM-DD")
+    leave_parser.add_argument("--until", required=True, help="Last date, YYYY-MM-DD")
+    leave_parser.add_argument("--reason", required=True, help="Reason sent to the school")
+    leave_parser.add_argument("--start", help="Optional start time, HH:MM")
+    leave_parser.add_argument("--end", help="Optional end time, HH:MM")
+    leave_parser.add_argument("--apply", action="store_true", help="Submit the application")
+    leave_parser.add_argument("--confirm", action="store_true", help="Required with --apply")
+    fritids_parser = subparsers.add_parser("fritids", parents=[_global_flags],
+        help="Preview or set one day's fritids schedule")
+    fritids_parser.add_argument("--child", required=True, help="Exact or unique child name")
+    fritids_parser.add_argument("--date", required=True, help="Local date, YYYY-MM-DD")
+    fritids_choice = fritids_parser.add_mutually_exclusive_group(required=True)
+    fritids_choice.add_argument("--free", action="store_true", help="Mark the child free from fritids")
+    fritids_choice.add_argument("--start", help="Arrival time, HH:MM; requires --end")
+    fritids_parser.add_argument("--end", help="Departure time, HH:MM; requires --start")
+    fritids_parser.add_argument("--overwrite-existing", action="store_true",
+        help="Required when changing an existing schedule")
+    fritids_parser.add_argument("--apply", action="store_true", help="Save the fritids day")
+    fritids_parser.add_argument("--confirm", action="store_true", help="Required with --apply")
     news_parser = subparsers.add_parser("news", parents=[_global_flags], help="Fetch a news item by ID")
     news_parser.add_argument("id", help="News item ID (from notifications output)")
     news_parser.add_argument("--child", help="Switch to this child's context before fetching")
@@ -666,6 +722,12 @@ safety:
             _calendar(args)
         elif args.command == "attendance":
             _attendance(args)
+        elif args.command == "absence":
+            _absence(args)
+        elif args.command == "leave":
+            _leave(args)
+        elif args.command == "fritids":
+            _fritids(args)
         elif args.command == "news":
             _news(args)
         elif args.command == "meeting":
@@ -972,6 +1034,172 @@ def _attendance(args):
         _resolve_and_switch_child(session, args.child)
     _progress("Fetching attendance detail...", args.quiet)
     result = get_attendance_detail(session, args.id)
+    _output_json(result, args)
+
+
+def _absence(args):
+    target = _validate_exact_date(args.date, "--date")
+    if target not in (date.today(), date.today() + timedelta(days=1)):
+        emit_error("invalid_input", "School absence can only be reported for today or tomorrow.", exit_code=EXIT_USAGE)
+    _require_write_flags(args)
+    session = _get_session(quiet=args.quiet)
+    child = _resolve_and_switch_child(session, args.child)
+    data = get_attendance_app_data(session)
+    day = next((name for name in ("today", "tomorrow")
+                if data.get(f"absence{name.title()}Date") == target.isoformat()), None)
+    if day is None or data.get("canRegisterDayAbsence") is not True:
+        emit_error("absence_unavailable", "Full-day absence reporting is unavailable for this child and date.", exit_code=EXIT_USAGE)
+    if not isinstance(data.get(f"absent{day.title()}"), bool) or not isinstance(data.get(f"absence{day.title()}Locked"), bool):
+        raise UpstreamStateError("InfoMentor returned invalid absence status.")
+    absent = data.get(f"absent{day.title()}") is True
+    locked = data.get(f"absence{day.title()}Locked") is True
+    result = {
+        "child": child["name"], "child_id": child["id"], "date": target.isoformat(),
+        "mode": "apply" if args.apply else "preview", "already_absent": absent,
+        "locked": locked, "would_write_if_applied": not absent and not locked,
+        "write_performed": False,
+    }
+    if not args.apply:
+        _output_json(result, args)
+        return
+    if absent:
+        result["verified"] = True
+        _output_json(result, args)
+        return
+    if locked:
+        emit_error("absence_locked", "InfoMentor has locked absence reporting for this date.", exit_code=EXIT_USAGE)
+    report_full_day_absence(session, day, False)
+    saved = get_attendance_app_data(session)
+    if saved.get(f"absent{day.title()}") is not True:
+        emit_error("verification_failed", "The school absence report could not be verified.", exit_code=EXIT_ERROR)
+    result.update(write_performed=True, verified=True, already_absent=True, would_write_if_applied=False)
+    _output_json(result, args)
+
+
+def _leave(args):
+    start_date = _validate_exact_date(args.from_date, "--from")
+    end_date = _validate_exact_date(args.until, "--until")
+    if start_date < date.today() + timedelta(days=2):
+        emit_error("invalid_input", "Leave applications must start at least two days from today.", exit_code=EXIT_USAGE)
+    if end_date < start_date:
+        emit_error("invalid_input", "--until cannot be before --from.", exit_code=EXIT_USAGE)
+    if not args.reason.strip():
+        emit_error("invalid_input", "--reason must not be empty.", exit_code=EXIT_USAGE)
+    if bool(args.start) != bool(args.end):
+        emit_error("invalid_input", "--start and --end must be provided together.", exit_code=EXIT_USAGE)
+    start_time = _validate_time(args.start, "--start") if args.start else None
+    end_time = _validate_time(args.end, "--end") if args.end else None
+    if start_time and (int(start_time[-2:]) % 15 or int(end_time[-2:]) % 15):
+        emit_error("invalid_input", "Leave times must be on 15-minute boundaries.", exit_code=EXIT_USAGE)
+    if start_date == end_date and start_time and start_time >= end_time:
+        emit_error("invalid_input", "--end must be after --start on a single day.", exit_code=EXIT_USAGE)
+    _require_write_flags(args)
+    session = _get_session(quiet=args.quiet)
+    child = _resolve_and_switch_child(session, args.child)
+    data = get_attendance_app_data(session)
+    if data.get("canRequestLeave") is not True:
+        emit_error("leave_unavailable", "Leave applications are unavailable for this child.", exit_code=EXIT_USAGE)
+    requests_list = get_leave_requests(session)
+    overlaps = []
+    for item in requests_list:
+        if not isinstance(item, dict) or not isinstance(item.get("fromDate"), str) or not isinstance(item.get("toDate"), str):
+            raise UpstreamStateError("InfoMentor returned invalid leave request dates.")
+        try:
+            date.fromisoformat(item["fromDate"][:10])
+            date.fromisoformat(item["toDate"][:10])
+        except ValueError:
+            raise UpstreamStateError("InfoMentor returned invalid leave request dates.") from None
+        if item.get("status") not in {"Denied", "Expired"} and item["fromDate"][:10] <= end_date.isoformat() and item["toDate"][:10] >= start_date.isoformat():
+            overlaps.append({"id": item.get("id"), "status": item.get("status"),
+                             "from_date": item["fromDate"][:10], "until": item["toDate"][:10]})
+    result = {
+        "child": child["name"], "child_id": child["id"],
+        "from_date": start_date.isoformat(), "until": end_date.isoformat(),
+        "start": start_time, "end": end_time, "reason": args.reason,
+        "mode": "apply" if args.apply else "preview", "overlapping_requests": overlaps,
+        "would_write_if_applied": not overlaps, "write_performed": False,
+    }
+    if not args.apply:
+        _output_json(result, args)
+        return
+    if overlaps:
+        emit_error("overlapping_leave", "An existing leave application overlaps this date range.", exit_code=EXIT_USAGE)
+    request_id = create_leave_request(session, start_date.isoformat(), end_date.isoformat(),
+                                      args.reason, start_time, end_time)
+    saved = next((item for item in get_leave_requests(session)
+                  if isinstance(item, dict) and str(item.get("id")) == str(request_id)), None)
+    if (not saved or saved.get("fromDate", "")[:10] != start_date.isoformat()
+            or saved.get("toDate", "")[:10] != end_date.isoformat()
+            or saved.get("requesterComment") != args.reason):
+        emit_error("verification_failed", "The leave application could not be verified.", exit_code=EXIT_ERROR)
+    result.update(id=request_id, status=saved.get("status"), write_performed=True,
+                  verified=True, would_write_if_applied=False)
+    _output_json(result, args)
+
+
+def _fritids(args):
+    target = _validate_exact_date(args.date, "--date")
+    if target < date.today():
+        emit_error("invalid_input", "Fritids schedule date cannot be in the past.", exit_code=EXIT_USAGE)
+    if args.free and args.end or not args.free and not args.end:
+        emit_error("invalid_input", "Use --free or both --start and --end.", exit_code=EXIT_USAGE)
+    start_time = _validate_time(args.start, "--start") if args.start else None
+    end_time = _validate_time(args.end, "--end") if args.end else None
+    if start_time and start_time >= end_time:
+        emit_error("invalid_input", "--end must be after --start.", exit_code=EXIT_USAGE)
+    _require_write_flags(args)
+    session = _get_session(quiet=args.quiet)
+    child = _resolve_and_switch_child(session, args.child)
+    try:
+        row = get_time_registration_for_date(session, target.isoformat())
+    except RuntimeError:
+        emit_error("not_found", "No fritids schedule day was found for this date.", exit_code=EXIT_NOT_FOUND)
+    if not isinstance(row, dict) or str(row.get("date", ""))[:10] != target.isoformat():
+        raise UpstreamStateError("InfoMentor returned invalid fritids schedule data.")
+    if not all(isinstance(row.get(key), bool) for key in ("onLeave", "canEdit", "isLocked")):
+        raise UpstreamStateError("InfoMentor returned invalid fritids schedule status.")
+    for key, value in (("schoolOpeningTime", start_time), ("schoolClosingTime", end_time)):
+        bound = row.get(key)
+        if value and isinstance(bound, str) and (value < bound[11:16] if key == "schoolOpeningTime" else value > bound[11:16]):
+            emit_error("invalid_input", "Fritids times must be within the school's opening hours.", exit_code=EXIT_USAGE)
+    existing_free = row.get("onLeave") is True
+    existing_start = str(row.get("startDateTime") or "")[11:16] or None
+    existing_end = str(row.get("endDateTime") or "")[11:16] or None
+    same = (existing_free if args.free else not existing_free and existing_start == start_time and existing_end == end_time)
+    has_existing = existing_free or bool(existing_start or existing_end)
+    editable = row.get("canEdit") is True and row.get("isLocked") is not True
+    needs_overwrite = has_existing and not same
+    result = {
+        "child": child["name"], "child_id": child["id"], "date": target.isoformat(),
+        "mode": "apply" if args.apply else "preview",
+        "existing": {"free": existing_free, "start": existing_start, "end": existing_end},
+        "proposed": {"free": args.free, "start": start_time, "end": end_time},
+        "editable": editable, "overwrite_required": needs_overwrite,
+        "would_write_if_applied": editable and not same and (not needs_overwrite or args.overwrite_existing),
+        "write_performed": False,
+    }
+    if not args.apply:
+        _output_json(result, args)
+        return
+    if same:
+        result["verified"] = True
+        _output_json(result, args)
+        return
+    if not editable:
+        emit_error("fritids_locked", "This fritids schedule day cannot be edited.", exit_code=EXIT_USAGE)
+    if needs_overwrite and not args.overwrite_existing:
+        emit_error("existing_schedule", "Use --overwrite-existing to change this fritids schedule day.", exit_code=EXIT_USAGE)
+    save_time_registration_day(session, row, free=args.free, start=start_time, end=end_time)
+    try:
+        saved = get_time_registration_for_date(session, target.isoformat())
+    except RuntimeError:
+        saved = None
+    if (not isinstance(saved, dict) or
+            (saved.get("onLeave") is True) != args.free or
+            (not args.free and (str(saved.get("startDateTime") or "")[11:16] != start_time or
+                                str(saved.get("endDateTime") or "")[11:16] != end_time))):
+        emit_error("verification_failed", "The fritids schedule could not be verified.", exit_code=EXIT_ERROR)
+    result.update(write_performed=True, verified=True, would_write_if_applied=False)
     _output_json(result, args)
 
 
